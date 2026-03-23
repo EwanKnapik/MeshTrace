@@ -78,6 +78,32 @@ def binarization_loss(x, eps=1e-6):
     return -x * torch.log(x) - (1 - x) * torch.log(1 - x)
 
 
+def contrastive_loss(features, instance_labels, temperature):
+    bsize = features.size(0)
+    #masks = instance_labels.view(-1, 1).repeat(1, bsize).eq_(instance_labels.clone())
+    masks = instance_labels.unsqueeze(0) == instance_labels.unsqueeze(1)
+    masks.fill_diagonal_(False)
+    print(f"checkpoint 3.5.1, memory allocated:{torch.cuda.memory_allocated()/(2**30)} GiB")
+    #masks = masks.fill_diagonal_(0, wrap=False)
+
+    # compute similarity matrix based on Euclidean distance
+    distance_sq = torch.pow(features.unsqueeze(1) - features.unsqueeze(0), 2).sum(dim=-1)
+    # temperature = 1 for positive pairs and temperature for negative pairs
+    temperature = torch.ones_like(distance_sq) * temperature
+    temperature = torch.where(masks==1, temperature, torch.ones_like(temperature))
+
+    similarity_kernel = torch.exp(-distance_sq/temperature)
+    logits = torch.exp(similarity_kernel)
+
+    p = torch.mul(logits, masks).sum(dim=-1)
+    Z = logits.sum(dim=-1)
+
+    prob = torch.div(p, Z)
+    prob_masked = torch.masked_select(prob, prob.ne(0))
+    loss = -prob_masked.log().sum()/bsize
+    return loss
+
+
 def l1_loss(network_output, gt):
     return torch.abs((network_output - gt)).mean()
 

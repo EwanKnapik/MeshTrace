@@ -63,6 +63,7 @@ class ModelParams(ParamGroup):
         self._white_background = False
         self.data_device = "cuda"
         self.eval = False
+        self.sam_folder = "-"
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -143,6 +144,15 @@ class OptimizationParams(ParamGroup):
 
         self.depth_lambda_init = 0.01
         self.depth_lambda_final = 0.001
+
+        # chose between pruning and splitting triangles during remove_ab_triangles.py
+        self.prune = False
+        self.split = False
+
+        # Contrastive feature training
+        self.sample_num = 4096
+        self.feature_dim = 16
+        self.contrastive_lr = 0.001
 
         super().__init__(parser, "Optimization Parameters")
 

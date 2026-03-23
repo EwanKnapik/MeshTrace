@@ -1,0 +1,11 @@
+#!/bin/bash
+#SBATCH --job-name=triangle_splatting
+#SBATCH --chdir=/home/KnapikE/triangle-splatting2/
+#SBATCH --partition=rtx30
+#SBATCH --gres=gpu:1
+#SBATCH --nodes=1
+#SBATCH --output=output/output.%N.%J.%u.txt
+#SBATCH --error=error/error.%N.%J.%u.txt
+
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/figurines/images &
+wait

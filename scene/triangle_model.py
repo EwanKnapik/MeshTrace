@@ -301,8 +301,6 @@ class TriangleModel:
         self._features_rest      = state["features_rest"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
         self.importance_score = state["importance_score"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
         
-        print("triangles: ", self._triangle_indices.shape)
-        print("vertices: ", self.vertices.shape)
 
         # For object extraction
         if segment:

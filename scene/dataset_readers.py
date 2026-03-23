@@ -39,6 +39,7 @@ import cv2
 import torchvision.transforms.functional as TF
 from torchvision.transforms import InterpolationMode
 import re
+from glob import glob
 
 class CameraInfo(NamedTuple):
     uid: int
@@ -54,6 +55,7 @@ class CameraInfo(NamedTuple):
     normal_map: np.array = None 
     depth_params: dict = None  
     depth_path: str = ""     
+    sam_mask:np.array = None
     
 
 class SceneInfo(NamedTuple):
@@ -62,6 +64,12 @@ class SceneInfo(NamedTuple):
     test_cameras: list
     nerf_normalization: dict
     ply_path: str
+
+def glob_data(data_dir):
+    data_paths = []
+    data_paths.extend(glob(data_dir))
+    data_paths = sorted(data_paths)
+    return data_paths
 
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
@@ -93,9 +101,17 @@ def resize_to_multiple(tensor, multiple=28):
     new_W = (W // multiple) * multiple
     return torch.nn.functional.interpolate(tensor, size=(new_H, new_W), mode='bilinear', align_corners=False)
 
-def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_folder, depths_folder):
+def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_folder, depths_folder,sam_folder='non'):
+    dataset="/".join(images_folder.split("/")[:-1])
 
     cam_infos = []
+    if sam_folder in ['overlap','split','origin_overlap','pre_union','sam_origin_cover']:
+        print(f"Reading SAM masks from folder: {sam_folder}")
+        print(f"Looking for SAM masks in: {dataset}/sam/{sam_folder}/*.npy")
+        sam_paths = glob_data(os.path.join(dataset , "sam" ,sam_folder ,"*.npy"))
+    else:
+        sam_paths=None
+    sam_i=0
     for idx, key in enumerate(cam_extrinsics):
         sys.stdout.write('\r')
         sys.stdout.write("Reading camera {}/{}".format(idx+1, len(cam_extrinsics)))
@@ -153,7 +169,22 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
             normal_image = Image.open(normal_path).convert("RGB")
             normal_np = np.array(normal_image).astype(np.float32) / 255.0
             normal = (normal_np * 2.0) - 1.0
-       
+
+
+        if (sam_paths is not None ):
+            sam_mask=np.load(sam_paths[sam_i])
+            sam_i+=1
+            id_masks=torch.from_numpy(sam_mask).cuda()
+            id_list=torch.unique(id_masks,sorted=True).cuda()
+            for j,id in enumerate(id_list):
+                if id == 0:
+                    continue
+                id_masks[id_masks==id]=j
+            id_masks=id_masks.cpu().numpy()
+        else:
+            id_masks=None
+
+
         cam_info = CameraInfo(
             uid=uid,
             R=R,
@@ -168,6 +199,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
             normal_map=normal,
             depth_params=depth_params,
             depth_path=depth_path,
+            sam_mask=id_masks
         )
         cam_infos.append(cam_info)
 
@@ -200,7 +232,7 @@ def storePly(path, xyz, rgb):
     ply_data = PlyData([vertex_element])
     ply_data.write(path)
 
-def readColmapSceneInfo(path, images, eval, llffhold=8, aug=False):
+def readColmapSceneInfo(path, images, eval,sam_folder, llffhold=8, aug=False):
     try:
         cameras_extrinsic_file = os.path.join(path, "sparse/0", "images.bin")
         cameras_intrinsic_file = os.path.join(path, "sparse/0", "cameras.bin")
@@ -242,6 +274,7 @@ def readColmapSceneInfo(path, images, eval, llffhold=8, aug=False):
         depths_params=depths_params,
         images_folder=os.path.join(path, reading_dir),
         depths_folder=depths_folder,
+        sam_folder=sam_folder
     )
     cam_infos = sorted(cam_infos_unsorted.copy(), key = lambda x : x.image_name)
 
