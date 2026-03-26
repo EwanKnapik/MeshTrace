@@ -142,6 +142,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     pcycle = opt.split_cycle_num if hasattr(opt, 'split_cycle_num') else 0
     cycle_from = opt.split_from_iter if hasattr(opt, 'split_from_iter') else 0
     cycle_interval = opt.split_cycle_interval if hasattr(opt, 'split_cycle_interval') else 1000
+    scale = 0.8#越大分出来的越小
     threshold = 25       # unseen threshold
     soft_th = 0.8        # lower = less strict
     sp_th = 0.4
@@ -170,6 +171,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack) - 1))
 
         render_pkg = render(viewpoint_cam, triangles, pipe, background)
+        #image, viewspace_point_tensor, visibility_filter, radii, depth= render_pkg["render"], render_pkg["viewspace_points"], render_pkg["visibility_filter"], render_pkg["radii"], render_pkg['surf_depth']
         image = render_pkg["render"]
         depth = render_pkg['surf_depth']
 
@@ -241,50 +243,36 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                                     f'ratio {pre_split_num / num_triangles}, '
                                     f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}\n')
 
-                    # Split abnormal triangles by subdividing them
-                    if sp_mask.any():
-                        split_indices = torch.where(sp_mask)[0]
-                        (new_verts, new_weights, new_fdc, new_frest, new_tris) = \
-                            triangles._update_params_fast(split_indices, iteration)
-                        triangles.densification_postfix(new_verts, new_weights, new_fdc, new_frest, new_tris)
-                        # Remove the original (now-subdivided) triangles
-                        keep = torch.ones(triangles._triangle_indices.shape[0], dtype=torch.bool, device="cuda")
-                        keep[split_indices] = False
-                        triangles.prune_triangles(keep)
-
+                    # Delete-only behavior: remove ambiguous triangles directly.
                     ob_ratio = sp_mask.sum().item()
-
-                    # Remove triangles that are still abnormal after splitting
-                    sp_mask = split_mask(triangles, viewpoints, pipe, background,
-                                        threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
                     triangles.prune_triangles(~sp_mask)
                     pcycle -= 1
 
-            if iteration == opt.iterations:
-                sp_mask = split_mask(triangles, viewpoints, pipe, background,
-                                    threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
-                print(sp_mask.sum())
-                tri_areas = triangles.triangle_areas()
-                with open(result_file, 'a') as f:
-                    f.write(f'After: sp_mask num:{sp_mask.sum()} total:{triangles._triangle_indices.shape[0]}, '
-                            f'ratio {sp_mask.sum() / triangles._triangle_indices.shape[0]}, '
-                            f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}\n')
+            #if iteration == opt.iterations:
+            #    sp_mask = split_mask(triangles, viewpoints, pipe, background,
+            #                        threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
+            #    print(sp_mask.sum())
+            #    tri_areas = triangles.triangle_areas()
+            #    with open(result_file, 'a') as f:
+            #        f.write(f'After: sp_mask num:{sp_mask.sum()} total:{triangles._triangle_indices.shape[0]}, '
+            #                f'ratio {sp_mask.sum() / triangles._triangle_indices.shape[0]}, '
+            #                f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}\n')
 
-            if iteration % 1000 == 0:
-                # Current abnormal triangles
-                sp_mask = split_mask(triangles, viewpoints, pipe, background,
-                                    threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
-                tri_areas = triangles.triangle_areas()
-                print(sp_mask.sum(), tri_areas[sp_mask].mean() if sp_mask.any() else 0)
+            #if iteration % 1000 == 0:
+            #    # Current abnormal triangles
+            #    sp_mask = split_mask(triangles, viewpoints, pipe, background,
+            #                        threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
+            #    tri_areas = triangles.triangle_areas()
+            #    print(sp_mask.sum(), tri_areas[sp_mask].mean() if sp_mask.any() else 0)
 
             # Log and save
             if tb_writer is not None:
                 tb_writer.add_scalar('train_loss_patches/normal_loss', ema_normal_for_log, iteration)
 
             # Optimizer step
-            if iteration < opt.iterations:
-                triangles.optimizer.step()
-                triangles.optimizer.zero_grad(set_to_none=True)
+            #if iteration < opt.iterations:
+            #    triangles.optimizer.step()
+            #    triangles.optimizer.zero_grad(set_to_none=True)
 
             if iteration in saving_iterations:
                 print("\n[ITER {}] Saving Triangles".format(iteration))

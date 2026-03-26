@@ -16,6 +16,9 @@ def load_scene(scene_dir, device="cpu"):
     path = os.path.join(scene_dir, "point_cloud_state_dict.pt")
     if not os.path.isfile(path):
         raise FileNotFoundError(f"Could not find '{path}'")
+       # path=os.path.join(scene_dir, "././split/chkpnt/sp_20000.pth")
+       # if not os.path.isfile(path):
+       #     raise FileNotFoundError(f"Could not find '{path}'")
     sd = torch.load(path, map_location=device)
 
     # base mesh

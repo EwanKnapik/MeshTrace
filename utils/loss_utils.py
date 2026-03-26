@@ -80,27 +80,28 @@ def binarization_loss(x, eps=1e-6):
 
 def contrastive_loss(features, instance_labels, temperature):
     bsize = features.size(0)
-    #masks = instance_labels.view(-1, 1).repeat(1, bsize).eq_(instance_labels.clone())
-    masks = instance_labels.unsqueeze(0) == instance_labels.unsqueeze(1)
+    masks = instance_labels.view(-1, 1).eq(instance_labels.view(1, -1))
     masks.fill_diagonal_(False)
-    print(f"checkpoint 3.5.1, memory allocated:{torch.cuda.memory_allocated()/(2**30)} GiB")
-    #masks = masks.fill_diagonal_(0, wrap=False)
 
-    # compute similarity matrix based on Euclidean distance
-    distance_sq = torch.pow(features.unsqueeze(1) - features.unsqueeze(0), 2).sum(dim=-1)
-    # temperature = 1 for positive pairs and temperature for negative pairs
-    temperature = torch.ones_like(distance_sq) * temperature
-    temperature = torch.where(masks==1, temperature, torch.ones_like(temperature))
+    # Compute pairwise squared distances without materializing [N, N, D].
+    feat_sq = (features * features).sum(dim=1, keepdim=True)
+    distance_sq = feat_sq + feat_sq.T - 2.0 * (features @ features.T)
+    distance_sq = distance_sq.clamp_min(0.0)
 
-    similarity_kernel = torch.exp(-distance_sq/temperature)
+    # Positive pairs use the provided temperature; negative pairs use 1.0.
+    inv_temperature = torch.where(masks, 1.0 / temperature, torch.ones_like(distance_sq))
+
+    similarity_kernel = torch.exp(-distance_sq * inv_temperature)
     logits = torch.exp(similarity_kernel)
 
-    p = torch.mul(logits, masks).sum(dim=-1)
+    p = logits.masked_fill(~masks, 0.0).sum(dim=-1)
     Z = logits.sum(dim=-1)
 
-    prob = torch.div(p, Z)
-    prob_masked = torch.masked_select(prob, prob.ne(0))
-    loss = -prob_masked.log().sum()/bsize
+    prob = p / (Z + 1e-12)
+    prob_masked = prob.masked_select(prob > 0)
+    loss = -prob_masked.log().sum() / bsize
+
+    del logits, p, Z, prob, prob_masked, similarity_kernel, inv_temperature, distance_sq, feat_sq, masks
     return loss
 
 

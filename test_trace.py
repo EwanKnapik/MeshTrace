@@ -131,8 +131,11 @@ def do_cool_stuff(dataset, pipe, triangles, background, camera_stack, id):
     return list(trngl_set)
 
 
+
+
 def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack):
     # Global registry: index k stores triangle-id set for stable instance id (k + 1).
+    
     total_list = []
     # Previous view descriptors: list[(global_instance_id, triangle_id_set)].
     prev_view_segments = []
@@ -262,8 +265,24 @@ def main():
                   load_iteration=-1,
                   shuffle=False)
     #trngl_list = do_cool_stuff(dataset, pipe, triangles, background, scene.getTrainCameras(), args.id)
-    total_list=adjust_id_across_views(dataset, pipe, triangles, background, scene.getTrainCameras())
-    #create_ply("output/POLY_01/point_cloud/iteration_30000/point_cloud_state_dict.pt", "test.ply", total_list[args.id])
+    total_list = adjust_id_across_views(dataset, pipe, triangles, background, scene.getTrainCameras())
+
+    checkpoint_path = os.path.join(
+        scene.model_path,
+        "point_cloud",
+        f"iteration_{scene.loaded_iter}",
+        "point_cloud_state_dict.pt",
+    )
+    export_dir = os.path.join(scene.model_path, "instance_ply")
+    os.makedirs(export_dir, exist_ok=True)
+
+    print(f"Exporting {len(total_list)} instances to {export_dir}")
+    for instance_id, tri_ids in enumerate(total_list, start=1):
+        if not tri_ids:
+            print(f"Skipping instance {instance_id}: empty triangle set")
+            continue
+        output_name = os.path.join(export_dir, f"instance_{instance_id:04d}.ply")
+        create_ply(checkpoint_path, output_name, list(tri_ids))
 
 
 

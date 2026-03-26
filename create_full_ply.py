@@ -83,7 +83,7 @@ def save_ply_with_sh(verts, faces, features_dc, features_rest, opacities,
         "f_rest: higher-order SH, layout [R0..R14, G0..G14, B0..B14]",
         "opacity: logit space, apply sigmoid for [0,1]",
     ], text=False)
-    ply.write("test.ply")
+    ply.write(path)
 
     print(f"Saved {path}")
 

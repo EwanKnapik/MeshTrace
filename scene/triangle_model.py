@@ -677,6 +677,8 @@ class TriangleModel:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
                 if stored_state is not None:
                     # Prune optimizer state
+                    #print(f"Stored state shape: {stored_state['exp_avg'].shape}, Mask shape: {mask.shape}")
+                    #print(f"values in mask:{mask.unique()}")
                     stored_state["exp_avg"] = stored_state["exp_avg"][mask]
                     stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
                     
