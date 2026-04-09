@@ -23,8 +23,10 @@ from sixel import converter, sixel
 from io import BytesIO
 import matplotlib.pyplot as plt
 from PIL import Image
-from create_full_ply import create_ply
+from create_full_ply import create_ply_rgb
 import colorsys
+import time
+
 
 # fixed palette: 256 deterministic colors (RGB triplets 0-255) for indexed PNGs
 fixed_palette = []
@@ -131,11 +133,38 @@ def do_cool_stuff(dataset, pipe, triangles, background, camera_stack, id):
     return list(trngl_set)
 
 
+def compute_triangle_visibility(pipe, triangles, background, camera_stack, max_triangle_id, num=2):
+    # Count capped at 3 (uint8 is enough)
+    counts = np.zeros(max_triangle_id + 1, dtype=np.uint8)
+
+    for idx, camera in tqdm(enumerate(camera_stack), total=len(camera_stack)):
+        id_map, _ = get_rasterization_results(
+            camera, triangles, background, pipe,
+            alpha_w=False, scaling_modifier=1.0
+        )
+
+        # Move once to CPU + numpy
+        id_map = id_map.cpu().numpy()
+
+        # Unique triangle IDs in this image (avoid double counting per image)
+        trngl_ids = np.unique(id_map)
+
+        # Increment counts, capped at 3
+        for tid in trngl_ids:
+            if tid >= 0 and tid <= max_triangle_id:
+                if counts[tid] < num+1:
+                    counts[tid] += 1
+
+    # Final boolean result
+    result = counts > num
+
+    return result
 
 
-def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack):
-    # Global registry: index k stores triangle-id set for stable instance id (k + 1).
+
+def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack,num):
     
+    # Global registry: index k stores triangle-id set for stable instance id (k + 1).
     total_list = []
     # Previous view descriptors: list[(global_instance_id, triangle_id_set)].
     prev_view_segments = []
@@ -146,6 +175,14 @@ def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack):
     iou_threshold_prev = 0.20
     # Fallback threshold when matching against global registry.
     iou_threshold_global = 0.35
+
+    start = time.perf_counter()
+
+    result = compute_triangle_visibility(pipe, triangles, background, camera_stack, len(triangles.get_triangle_indices),num)
+
+    end = time.perf_counter()
+
+    print(f"Execution time: {end - start:.3f} seconds")
 
     for idx, camera in tqdm(enumerate(camera_stack)):
         print(f"processing camera {idx}")
@@ -166,7 +203,11 @@ def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack):
         for lbl in labels:
             mask = (segm_results == lbl)
             tri_ids = np.unique(id_map[mask])
-            tri_set = set(int(x) for x in tri_ids if int(x) != -1)
+            tri_set = set(
+                int(x)
+                for x in tri_ids
+                if int(x) >=0 and int(x) < len(result) and result[int(x)]
+            )
             if tri_set:
                 segments.append((mask, tri_set))
 
@@ -191,13 +232,11 @@ def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack):
             # Greedy max-IoU assignment ensures one prev instance maps to at most one segment.
             candidate_pairs.sort(reverse=True, key=lambda x: x[0])
             used_seg = set()
-            used_prev = set()
             for _, seg_i, prev_id in candidate_pairs:
-                if seg_i in used_seg or prev_id in used_prev:
+                if seg_i in used_seg:
                     continue
                 assigned_ids[seg_i] = prev_id
                 used_seg.add(seg_i)
-                used_prev.add(prev_id)
 
         # 2) Fallback: unmatched segments are matched to global registry.
         for seg_i, (_, tri_set) in enumerate(segments):
@@ -249,6 +288,7 @@ def main():
 
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--id", default=1, type=int)
+    parser.add_argument("--num", default=2, type=int)
     parser.add_argument("--alpha_w", action="store_true")
     args = get_combined_args(parser)
 
@@ -265,7 +305,7 @@ def main():
                   load_iteration=-1,
                   shuffle=False)
     #trngl_list = do_cool_stuff(dataset, pipe, triangles, background, scene.getTrainCameras(), args.id)
-    total_list = adjust_id_across_views(dataset, pipe, triangles, background, scene.getTrainCameras())
+    total_list = adjust_id_across_views(dataset, pipe, triangles, background, scene.getTrainCameras(),args.num)
 
     checkpoint_path = os.path.join(
         scene.model_path,
@@ -273,7 +313,7 @@ def main():
         f"iteration_{scene.loaded_iter}",
         "point_cloud_state_dict.pt",
     )
-    export_dir = os.path.join(scene.model_path, "instance_ply")
+    export_dir = os.path.join(scene.model_path, f"instance_ply_{args.num}",)
     os.makedirs(export_dir, exist_ok=True)
 
     print(f"Exporting {len(total_list)} instances to {export_dir}")
@@ -282,7 +322,7 @@ def main():
             print(f"Skipping instance {instance_id}: empty triangle set")
             continue
         output_name = os.path.join(export_dir, f"instance_{instance_id:04d}.ply")
-        create_ply(checkpoint_path, output_name, list(tri_ids))
+        create_ply_rgb(checkpoint_path, output_name, list(tri_ids))
 
 
 

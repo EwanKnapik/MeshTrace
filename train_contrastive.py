@@ -62,11 +62,15 @@ def _maybe_load_checkpoint(triangles, checkpoint, opt):
         return
 
     model_params, _ = loaded
-    if not (isinstance(model_params, tuple) and len(model_params) == 4):
+    if not (isinstance(model_params, tuple) and len(model_params) in (4, 5)):
         print(f"[WARN] Unsupported model tuple in checkpoint {checkpoint}. Skipping load.")
         return
 
-    active_sh_degree, features_dc, features_rest, opt_dict = model_params
+    if len(model_params) == 5:
+        active_sh_degree, features_dc, features_rest, instance_feature, opt_dict = model_params
+    else:
+        active_sh_degree, features_dc, features_rest, opt_dict = model_params
+        instance_feature = None
     current_vertex_count = triangles.get_vertices.shape[0]
 
     if features_dc.shape[0] != current_vertex_count or features_rest.shape[0] != current_vertex_count:
@@ -79,6 +83,10 @@ def _maybe_load_checkpoint(triangles, checkpoint, opt):
     triangles.active_sh_degree = active_sh_degree
     triangles._features_dc = torch.nn.Parameter(features_dc.detach().contiguous().requires_grad_(True))
     triangles._features_rest = torch.nn.Parameter(features_rest.detach().contiguous().requires_grad_(True))
+    if instance_feature is not None:
+        triangles._instance_feature = torch.nn.Parameter(instance_feature.detach().contiguous().requires_grad_(True))
+    else:
+        triangles._instance_feature = None
 
     # Rebuild optimizer so it tracks the loaded feature tensors.
     triangles.training_setup(opt, opt.feature_lr, opt.weight_lr, opt.lr_triangles_points_init)
@@ -129,17 +137,41 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
 
     # OLD CODE
     # Optional resume from a previously saved contrastive checkpoint.
-    if checkpoint is not None:
-        loaded = load_checkpoint_compat(checkpoint)
-        if isinstance(loaded, tuple) and len(loaded) == 2:
-            model_params, first_iter = loaded
-            if isinstance(model_params, tuple) and len(model_params) == 4:
-                (triangles.active_sh_degree,
-                 triangles._features_dc,
-                 triangles._features_rest,
-                 opt_dict) = model_params
-                triangles.optimizer.load_state_dict(opt_dict)
-            first_iter = 0
+    #if checkpoint is not None:
+    #    loaded = load_checkpoint_compat(checkpoint)
+    #    if isinstance(loaded, tuple) and len(loaded) == 2:
+    #        model_params, first_iter = loaded
+    #        if isinstance(model_params, tuple) and len(model_params) in (4, 5):
+    #            if len(model_params) == 5:
+    #                (triangles.active_sh_degree,
+    #                 triangles._features_dc,
+    #                 triangles._features_rest,
+    #                 triangles._instance_feature,
+    #                 opt_dict) = model_params
+    #            else:
+    #                (triangles.active_sh_degree,
+    #                 triangles._features_dc,
+    #                 triangles._features_rest,
+    #                 opt_dict) = model_params
+    #            print(model_params)
+    #            print(opt_dict.keys())
+    #            print(opt_dict['state'])
+    #            print(opt_dict['param_groups'])
+    #            triangles.restore(model_params, opt)
+    (model_params, first_iter) = torch.load(checkpoint,weights_only=False)
+    first_iter = 0
+    print("-"*20)
+    print(len(model_params))
+    print(first_iter)
+    (triangles.active_sh_degree,
+        triangles._features_dc,
+        triangles._features_rest,
+        triangles._instance_feature,
+        opt_dict) = model_params
+    print(opt_dict.keys())
+    print(opt_dict['state'])
+    print(opt_dict['param_groups'])
+    triangles.restore(model_params, opt)
 
     # GENERATED CODE
     # Optional resume/initialization from a previously saved contrastive checkpoint.
@@ -251,97 +283,17 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
             torch.cuda.empty_cache()
             # Optimizer step
             # Log and save
-            
-
-            # Handle pruning operations
-            if iteration % 500 == 0 and iteration < run_restricted_delaunay:
-                
-                # Building masks to delete triangles
-                triangle_vertex_weights = triangles.opacity_activation(
-                    triangles.vertex_weight[triangles._triangle_indices]
-                ) 
-                min_weights = triangle_vertex_weights.min(dim=1).values
-
-                mask_opacity     = (min_weights <= prune_triangles).squeeze()              # delete if too low
-                mask_importance  = (triangles.importance_score <= prune_triangles).squeeze()  # delete if too low
-                mask_size        = (triangles.image_size > prune_size).squeeze()                 # delete if too big
-
-                delete_mask = mask_opacity | mask_size
-
-                if number_of_training_views < 500: # only delete if the number of views are below 500. Otherwise, we might delete too much
-                    delete_mask = delete_mask | mask_importance
-
-                keep_mask   = ~delete_mask 
-
-                if iteration > opt.start_pruning:
-                    triangles.prune_triangles(keep_mask)
-             
-                # We prune vertices that are no longer used
-                device = triangles.vertices.device
-                used_vertex_mask = torch.zeros(triangles.vertices.shape[0], 
-                                            dtype=torch.bool, 
-                                            device=device)
-                if triangles._triangle_indices.numel() > 0:
-                    flat_indices = triangles._triangle_indices.flatten()
-                    used_vertex_mask[flat_indices] = True
-                
-                weight_mask = (triangles.get_vertex_weight.squeeze() >= prune_triangles)
-                print(f"shape of mask_out:{triangles.get_vertex_weight.shape}")
-                mask_out = triangles.vertices.shape[0]
-                vertex_mask = weight_mask[:mask_out] | used_vertex_mask
-
-                triangles._prune_vertices(vertex_mask)
-
-
-                triangle_vertex_weights = triangles.opacity_activation(
-                    triangles.vertex_weight[triangles._triangle_indices]
-                )  # [T,3]
-
-                needs_densification = (iteration < opt.densify_until_iter and 
-                                     iteration % opt.densification_interval == 0 and 
-                                     iteration > opt.densify_from_iter)
-                
-                if needs_densification:
-                    triangles.add_new_gs(iteration, cap_max=opt.max_points, splitt_large_triangles=splitt_large_triangles)
-   
-
-                if iteration > opt.start_opacity_floor:
-                    start_iter = opt.start_opacity_floor
-                    end_iter = total_iters_opacity  # the iteration where you want to reach final_opacity
-                    a = min(1.0, max(0.0, (iteration - start_iter) / max(1, end_iter - start_iter)))
-                    current_opacity = init_opacity + (final_opacity - init_opacity) * a
-                    current_opacity = min(current_opacity, final_opacity)
-                    triangles.update_min_weight(current_opacity)
-
-                    prune_triangles += 0.01 
-                    mask_out = triangles.vertices.shape[0]
-                    triangle_vertex_weights = triangles.get_vertex_weight[:mask_out][triangles._triangle_indices]
-            elif iteration == run_restricted_delaunay:
-                need_delaunay = True
-            elif iteration % 500 == 0 and iteration > run_restricted_delaunay + 1000:
-
-                if iteration > opt.start_opacity_floor:
-                    start_iter = opt.start_opacity_floor
-                    end_iter = total_iters_opacity  # the iteration where you want to reach final_opacity
-                    a = min(1.0, max(0.0, (iteration - start_iter) / max(1, end_iter - start_iter)))
-                    current_opacity = init_opacity + (final_opacity - init_opacity) * a
-                    current_opacity = min(current_opacity, final_opacity)
-                    triangles.update_min_weight(current_opacity)
-
-                    prune_triangles += 0.01 
-                    mask_out = triangles.vertices.shape[0]
-                    triangle_vertex_weights = triangles.get_vertex_weight[:mask_out][triangles._triangle_indices]
-            
 
             if iteration < opt.iterations:
                 triangles.optimizer.step()
                 triangles.optimizer.zero_grad(set_to_none = True)
             
             if (iteration in save_iterations):
-                save_path=os.path.join(scene.model_path, dataset.sam_folder, 'chkpnt')
-                os.makedirs(save_path, exist_ok=True)
-                save_path= os.path.join(save_path, save_name + str(iteration) + ".pth") #TODO distinguish load chkpnt by load_iter
-                torch.save((triangles.capture(), iteration),save_path)
+                #save_path=os.path.join(scene.model_path, dataset.sam_folder, 'chkpnt')
+                #os.makedirs(save_path, exist_ok=True)
+                #save_path= os.path.join(save_path, save_name + str(iteration) + ".pth") #TODO distinguish load chkpnt by load_iter
+                #torch.save((triangles.capture(), iteration),save_path)
+                scene.save(f"{save_name}{iteration}")          
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
  
 

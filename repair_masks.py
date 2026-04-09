@@ -54,11 +54,18 @@ class MaskRepairPipeline:
             else:
                 p_mask = mask.mask.to(torch.int)
             view = camera_stack[mask.view]
-            w = trace(view, self.triangles, p_mask, p_mask.max(), pipe, background, alpha_w)
-            unseen = (w.sum(-1) == 0)
-            w = torch.argmax(w, dim=-1)
-            w[unseen] = UNSEEN_VALUE
-            weights[:, idx] = w
+            pred, total = trace(
+                view,
+                self.triangles,
+                p_mask,
+                p_mask.max(),
+                pipe,
+                background,
+                alpha_w,
+                return_assignment=True,
+            )
+            pred[total == 0] = UNSEEN_VALUE
+            weights[:, idx] = pred
 
         return weights
 

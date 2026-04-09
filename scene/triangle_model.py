@@ -151,6 +151,7 @@ class TriangleModel:
         self.active_sh_degree = 0
         self.max_sh_degree = sh_degree  
         self._features_dc = torch.empty(0)
+        self._instance_feature = None
         self._features_rest = torch.empty(0)
         self.optimizer = None
         self.image_size = 0
@@ -180,6 +181,7 @@ class TriangleModel:
         point_cloud_state_dict["active_sh_degree"] = self.active_sh_degree
         point_cloud_state_dict["features_dc"] = self._features_dc
         point_cloud_state_dict["features_rest"] = self._features_rest
+        point_cloud_state_dict["instance_feature"] = self._instance_feature
         point_cloud_state_dict["importance_score"] = self.importance_score
         point_cloud_state_dict["image_size"] = self.image_size
         point_cloud_state_dict["pixel_count"] = self.pixel_count
@@ -254,6 +256,7 @@ class TriangleModel:
         self.active_sh_degree = deg
         self._features_dc = features_dc.requires_grad_(True)
         self._features_rest = features_rest.requires_grad_(True)
+        self._instance_feature = None
 
         opacity_weight = 1.0
         self.opacity_floor = 0.9999
@@ -299,6 +302,10 @@ class TriangleModel:
         self.active_sh_degree    = state["active_sh_degree"]
         self._features_dc        = state["features_dc"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
         self._features_rest      = state["features_rest"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
+        if "instance_feature" in state and state["instance_feature"] is not None:
+            self._instance_feature = state["instance_feature"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
+        else:
+            self._instance_feature = None
         self.importance_score = state["importance_score"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
         
 
@@ -341,19 +348,35 @@ class TriangleModel:
 
 
     def capture(self):
+        opt_dict=self.optimizer.state_dict()
+        print(opt_dict.keys())
+        print(opt_dict['state'])
+        print(opt_dict['param_groups'])
+        print()
         return (
             self.active_sh_degree,
             self._features_dc,
             self._features_rest,
+            self._instance_feature,
             self.optimizer.state_dict(),
         )
     
     def restore(self, model_args, training_args):
-        (self.active_sh_degree, 
-        self._features_dc, 
-        self._features_rest,
-        opt_dict) = model_args
-        self.training_setup(training_args)
+        if len(model_args) == 5:
+            (self.active_sh_degree,
+             self._features_dc,
+             self._features_rest,
+             self._instance_feature,
+             opt_dict) = model_args
+        else:
+            (self.active_sh_degree,
+             self._features_dc,
+             self._features_rest,
+             opt_dict) = model_args
+            self._instance_feature = None
+
+        print(opt_dict)
+        self.training_setup(training_args, training_args.feature_lr, training_args.weight_lr, training_args.lr_triangles_points_init)
         self.optimizer.load_state_dict(opt_dict)
 
     def replace_tensor_to_optimizer(self, tensor, name):
@@ -396,6 +419,14 @@ class TriangleModel:
         features_rest = self._features_rest
         feats_main = torch.cat((features_dc, features_rest), dim=1)  # [Vmain, F, 3]
         return feats_main
+
+    @property
+    def get_instance_feature(self):
+        return self._instance_feature
+
+    def set_instance_feature(self, instance_features):
+        assert instance_features.shape[0] == self.vertices.shape[0]
+        self._instance_feature = instance_features
        
     @property
     def get_vertex_weight(self):
@@ -473,6 +504,7 @@ class TriangleModel:
         # SH feature tensors (transpose to [3N, 1, F] and [3N, (3-1)=2, F] like your code)
         self._features_dc = nn.Parameter(features[:, :, 0:1].transpose(1, 2).contiguous().requires_grad_(True))
         self._features_rest = nn.Parameter(features[:, :, 1:].transpose(1, 2).contiguous().requires_grad_(True))
+        self._instance_feature = None
 
         # Per-triangle buffers (match Delaunay sizing by triangles count)
         self.image_size = torch.zeros((self._triangle_indices.shape[0]), dtype=torch.float32, device="cuda")
@@ -482,13 +514,27 @@ class TriangleModel:
       
   
     def training_setup(self, training_args, lr_features, weight_lr, lr_triangles_init):
-      
-        l = [
-            {'params': [self._features_dc], 'lr': lr_features, "name": "f_dc"},
-            {'params': [self._features_rest], 'lr': lr_features / 20.0, "name": "f_rest"},
-            {'params': [self.vertices], 'lr': lr_triangles_init, "name": "vertices"},
-            {'params': [self.vertex_weight], 'lr': weight_lr, "name": "vertex_weight"}
-        ]
+
+        if training_args.include_feature:
+            if self._instance_feature is None or self._instance_feature.shape[0] != self.vertices.shape[0]:
+ 
+                instance_feature = torch.randn((self.vertices.shape[0], 16), device="cuda")
+                # instance_feature = 1e-3 * torch.normal(mean=0.0, std=1.0, size=(self._xyz.shape[0], 16)).float().cuda()
+                self._instance_feature = nn.Parameter(instance_feature.requires_grad_(True))
+            elif not isinstance(self._instance_feature, nn.Parameter):
+                self._instance_feature = nn.Parameter(self._instance_feature.detach().clone().requires_grad_(True))
+
+            l = [
+                {'params': [self._instance_feature],
+                    'lr': training_args.instance_feature_lr, "name": "instance_feature"},
+            ]
+        else:
+            l = [
+                {'params': [self._features_dc], 'lr': lr_features, "name": "f_dc"},
+                {'params': [self._features_rest], 'lr': lr_features / 20.0, "name": "f_rest"},
+                {'params': [self.vertices], 'lr': lr_triangles_init, "name": "vertices"},
+                {'params': [self.vertex_weight], 'lr': weight_lr, "name": "vertex_weight"}
+            ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
 
@@ -564,7 +610,7 @@ class TriangleModel:
         return optimizable_tensors
     
 
-    def densification_postfix(self, new_vertices, new_vertex_weight, new_features_dc, new_features_rest, new_triangles):
+    def densification_postfix(self, new_vertices, new_vertex_weight, new_features_dc, new_features_rest, new_triangles, new_instance_feature=None):
         # Create dictionary of new tensors to append
         d = {
             "vertices": new_vertices,
@@ -572,6 +618,8 @@ class TriangleModel:
             "f_dc": new_features_dc,
             "f_rest": new_features_rest,
         }
+        if new_instance_feature is not None:
+            d["instance_feature"] = new_instance_feature
         
         # Append new tensors to optimizer
         optimizable_tensors = self.cat_tensors_to_optimizer(d)
@@ -581,6 +629,8 @@ class TriangleModel:
         self.vertex_weight = optimizable_tensors["vertex_weight"]
         self._features_dc = optimizable_tensors["f_dc"]
         self._features_rest = optimizable_tensors["f_rest"]
+        if "instance_feature" in optimizable_tensors:
+            self._instance_feature = optimizable_tensors["instance_feature"]
         
         # Update triangle indices
         self._triangle_indices = torch.cat([
@@ -658,6 +708,9 @@ class TriangleModel:
         avg_opacity = (opacity_u + opacity_v) / 2.0
         avg_opacity = torch.clamp(avg_opacity, self.opacity_floor + self.eps, 1 - self.eps)
         new_vertex_weight = self.inverse_opacity_activation(avg_opacity)
+        new_instance_feature = None
+        if self._instance_feature is not None:
+            new_instance_feature = (self._instance_feature[u] + self._instance_feature[v]) / 2.0
 
         new_triangles = subdivided_triangles
         
@@ -666,14 +719,15 @@ class TriangleModel:
             new_vertex_weight,
             new_features_dc,
             new_features_rest,
-            new_triangles
+            new_triangles,
+            new_instance_feature
         )
 
 
     def _prune_vertex_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["vertices", "vertex_weight", "f_dc", "f_rest"]:
+            if group["name"] in ["vertices", "vertex_weight", "f_dc", "f_rest", "instance_feature"]:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
                 if stored_state is not None:
                     # Prune optimizer state
@@ -701,6 +755,8 @@ class TriangleModel:
                 self._features_dc = tensor
             elif name == "f_rest":
                 self._features_rest = tensor
+            elif name == "instance_feature":
+                self._instance_feature = tensor
 
 
     def _prune_vertices(self, vertex_mask: torch.Tensor):
@@ -796,9 +852,9 @@ class TriangleModel:
         # 3) combine and deduplicate
         add_idx = torch.unique(torch.cat([rand_idx, top_idx.to(rand_idx.device)]), sorted=False)
 
-        (new_vertices, new_vertex_weight, new_features_dc, new_features_rest, new_triangles) = self._update_params_fast(add_idx, iteration)
+        (new_vertices, new_vertex_weight, new_features_dc, new_features_rest, new_triangles, new_instance_feature) = self._update_params_fast(add_idx, iteration)
 
-        self.densification_postfix(new_vertices, new_vertex_weight, new_features_dc, new_features_rest, new_triangles)
+        self.densification_postfix(new_vertices, new_vertex_weight, new_features_dc, new_features_rest, new_triangles, new_instance_feature)
 
         mask = torch.ones(self._triangle_indices.shape[0], dtype=torch.bool)
         mask[add_idx] = False

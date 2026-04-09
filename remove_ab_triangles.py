@@ -280,6 +280,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
             if iteration in checkpoint_iterations:
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
+                print(len(triangles.capture()))
+                print(iteration)
                 torch.save((triangles.capture(), iteration),
                            scene.model_path + "/chkpnt_triangles.pth")
 

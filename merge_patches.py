@@ -91,11 +91,18 @@ class MaskRepairPipeline:
             else:
                 p_mask = mask.mask.to(torch.int)
             view = camera_stack[mask.view]
-            w = trace(view, self.triangles, p_mask, p_mask.max(), pipe, background, alpha_w)#[p,class]
-            unseen = (w.sum(-1) == 0)
-            w = torch.argmax(w, dim=-1)
-            w[unseen] = UNSEEN_VALUE
-            weights[:, idx] = w
+            pred, total = trace(
+                view,
+                self.triangles,
+                p_mask,
+                p_mask.max(),
+                pipe,
+                background,
+                alpha_w,
+                return_assignment=True,
+            )
+            pred[total == 0] = UNSEEN_VALUE
+            weights[:, idx] = pred
             
         return weights
         
@@ -112,6 +119,7 @@ class MaskRepairPipeline:
                 sam_data = np.load(f"{self.dataset_path}/{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/{self.sam_name(camera.image_name)}")
             sam_tensor = torch.from_numpy(sam_data).cuda().squeeze()
             sam_tensor = sam_tensor[sam_tensor.sum((-2, -1)) > 96].squeeze()
+            print(f"sam_tensor shape: {sam_tensor.shape}")
             mask = SegmentationMask(sam_tensor, view=idx, image_name= camera.image_name)
             # mask.pre_process(sam_tensor, 0.001)
             masks.append(mask)
@@ -137,22 +145,22 @@ class MaskRepairPipeline:
         aligned_weights = self.compute_weights(masks, self.camera_stack, pipe, background, alpha_w)
         align_instance_ids_across_views(masks, aligned_weights)
 
-        for i, mask in tqdm(enumerate(masks), total=len(masks), desc="Saving masks"):
-            
-            if len(mask.rp_iou) > 0:
-                miou = torch.stack(mask.rp_iou).mean().item()
-            else:
-                miou = 0
-            plt.imsave(
-                sam_path / COMPARE_FOLDER/f'iter={iteration}' / '{}_{}_{:.2f}.png'.format(mask.image_name,mask.repaired_num,miou),
-                mask.compare_mask().cpu().numpy()  
-            )
-            
-            np.save(
-                sam_path / SPLIT_FOLDER / f'{mask.image_name}.npy',
-                mask.mask.cpu().numpy()
-            )
-            
+        #for i, mask in tqdm(enumerate(masks), total=len(masks), desc="Saving masks"):
+        #    
+        #    if len(mask.rp_iou) > 0:
+        #        miou = torch.stack(mask.rp_iou).mean().item()
+        #    else:
+        #        miou = 0
+        #    plt.imsave(
+        #        sam_path / COMPARE_FOLDER/f'iter={iteration}' / '{}_{}_{:.2f}.png'.format(mask.image_name,mask.repaired_num,miou),
+        #        mask.compare_mask().cpu().numpy()  
+        #    )
+        #    
+        #    np.save(
+        #        sam_path / SPLIT_FOLDER / f'{mask.image_name}.npy',
+        #        mask.mask.cpu().numpy()
+        #    )
+        #    
 
 def main():
 
