@@ -282,8 +282,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 print("\n[ITER {}] Saving Checkpoint".format(iteration))
                 print(len(triangles.capture()))
                 print(iteration)
-                torch.save((triangles.capture(), iteration),
-                           scene.model_path + "/chkpnt_triangles.pth")
+                scene.save(f"chkpt_{iteration}")          
+                print("\n[ITER {}] Saving Checkpoint".format(iteration))
+                #torch.save((triangles.capture(), iteration),
+                #           scene.model_path + "/chkpnt_triangles.pth")
 
             training_report(tb_writer, iteration, Ll1, loss, l1_loss,
                            iter_start.elapsed_time(iter_end), testing_iterations,

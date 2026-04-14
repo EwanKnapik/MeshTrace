@@ -185,6 +185,7 @@ class TriangleModel:
         point_cloud_state_dict["importance_score"] = self.importance_score
         point_cloud_state_dict["image_size"] = self.image_size
         point_cloud_state_dict["pixel_count"] = self.pixel_count
+        point_cloud_state_dict["opt_dict"] = self.optimizer.state_dict()
 
         torch.save(point_cloud_state_dict, os.path.join(path, 'point_cloud_state_dict.pt'))
 
@@ -348,11 +349,6 @@ class TriangleModel:
 
 
     def capture(self):
-        opt_dict=self.optimizer.state_dict()
-        print(opt_dict.keys())
-        print(opt_dict['state'])
-        print(opt_dict['param_groups'])
-        print()
         return (
             self.active_sh_degree,
             self._features_dc,
@@ -361,23 +357,51 @@ class TriangleModel:
             self.optimizer.state_dict(),
         )
     
-    def restore(self, model_args, training_args):
-        if len(model_args) == 5:
-            (self.active_sh_degree,
-             self._features_dc,
-             self._features_rest,
-             self._instance_feature,
-             opt_dict) = model_args
-        else:
-            (self.active_sh_degree,
-             self._features_dc,
-             self._features_rest,
-             opt_dict) = model_args
-            self._instance_feature = None
+    def restore(self, model_params, training_args):
+        self.active_sh_degree = model_params["active_sh_degree"]
+        self._features_dc = model_params["features_dc"]
+        self._features_rest = model_params["features_rest"]
+        self.vertices = model_params["triangles_points"]
+        self._triangle_indices = model_params["_triangle_indices"]
+        self.vertex_weight = model_params["vertex_weight"]
+        self._sigma = model_params["sigma"]
+        self.importance_score = model_params["importance_score"]
+        self.image_size = model_params["image_size"]
+        self.pixel_count = model_params["pixel_count"]
+        self._instance_feature = model_params.get("instance_feature", None)
+        opt_dict = model_params.get("opt_dict", None)
 
-        print(opt_dict)
-        self.training_setup(training_args, training_args.feature_lr, training_args.weight_lr, training_args.lr_triangles_points_init)
-        self.optimizer.load_state_dict(opt_dict)
+        self.training_setup(
+            training_args,
+            training_args.feature_lr,
+            training_args.weight_lr,
+            training_args.lr_triangles_points_init,
+        )
+
+        if opt_dict is None:
+            print("No optimizer state found in checkpoint. Using freshly initialized optimizer.")
+            return
+
+        # Optimizer layouts can differ between training modes (e.g. include_feature on/off).
+        # Load only when parameter groups are compatible.
+        ckpt_groups = opt_dict.get("param_groups", [])
+        cur_groups = self.optimizer.param_groups
+
+        same_group_count = len(ckpt_groups) == len(cur_groups)
+        same_group_names = same_group_count and all(
+            ckpt_groups[i].get("name") == cur_groups[i].get("name")
+            for i in range(len(cur_groups))
+        )
+
+        if same_group_names:
+            self.optimizer.load_state_dict(opt_dict)
+        else:
+            ckpt_names = [g.get("name", "<unnamed>") for g in ckpt_groups]
+            cur_names = [g.get("name", "<unnamed>") for g in cur_groups]
+            print(
+                "Skipping optimizer state restore due to incompatible parameter groups. "
+                f"Checkpoint groups: {ckpt_names}, current groups: {cur_names}."
+            )
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}
@@ -518,7 +542,7 @@ class TriangleModel:
         if training_args.include_feature:
             if self._instance_feature is None or self._instance_feature.shape[0] != self.vertices.shape[0]:
  
-                instance_feature = torch.randn((self.vertices.shape[0], 16), device="cuda")
+                instance_feature = torch.randn((self._triangle_indices.shape[0], 10), device="cuda")
                 # instance_feature = 1e-3 * torch.normal(mean=0.0, std=1.0, size=(self._xyz.shape[0], 16)).float().cuda()
                 self._instance_feature = nn.Parameter(instance_feature.requires_grad_(True))
             elif not isinstance(self._instance_feature, nn.Parameter):

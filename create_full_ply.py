@@ -1,7 +1,9 @@
 import argparse
+import os
 import numpy as np
 import torch
 from plyfile import PlyData, PlyElement
+import trimesh
 
 
 def save_ply_with_sh(verts, faces, features_dc, features_rest, opacities,
@@ -87,7 +89,189 @@ def save_ply_with_sh(verts, faces, features_dc, features_rest, opacities,
 
     print(f"Saved {path}")
 
-def create_ply(path,output_name,instance_trgl=None):
+def create_ply_rgb(path,output_name,instance_trgl=None):
+    # ── load checkpoint ──
+    sd = torch.load(path, map_location="cpu", weights_only=False)
+
+    # positions & connectivity
+    vertices = sd["triangles_points"]          # [V, 3]
+    triangle_indices = sd["_triangle_indices"]  # [T, 3]
+    if instance_trgl is not None:
+
+        corrected_instance_trgl = [idx for idx in instance_trgl if idx < triangle_indices.shape[0] and idx >= 0]
+
+        # weights is a list of triangle indices belonging to the target object
+        #sti = Subset of Triangle Indices
+        sti=triangle_indices[corrected_instance_trgl]
+        vertices_indices=set(idx.item() for t in sti for idx in t)
+        subset_vertices=[]
+        Dict_trans={}
+        for i in range(vertices.shape[0]):
+            if i in vertices_indices:
+                subset_vertices.append(i)
+                Dict_trans[i]=len(subset_vertices)-1
+
+        orig_idx = torch.tensor(subset_vertices, dtype=torch.long)
+        vertices = vertices[orig_idx]
+
+        # Remap triangle indices to the new (compact) vertex indices
+        new_triangles = [[Dict_trans[v.item()] for v in T] for T in sti]
+        triangle_indices = torch.tensor(new_triangles, dtype=torch.long)
+    else:
+        orig_idx = None
+
+    # ── spherical harmonics ──
+    f_dc   = sd["features_dc"]    # [V, 1, 3]
+    if orig_idx is not None:
+        f_dc = f_dc[orig_idx]
+    
+    
+    verts_np = vertices.detach().cpu().numpy()
+    faces_np = triangle_indices.detach().cpu().numpy()
+
+    # Compute colors (same as original 3D Gaussian Splatting training)
+    SH_C0 = 0.28209479177387814
+    colors = SH_C0 * f_dc + 0.5
+    colors = torch.clamp(colors, 0.0, 1.0)
+    colors_u8 = (colors * 255.0).round().to(torch.uint8).cpu().numpy()
+    colors_u8 = colors_u8.squeeze()  # Remove the middle dimension [V, 1, 3] -> [V, 3]
+
+    mesh = trimesh.Trimesh(vertices=verts_np.astype(np.float32),
+                           faces=faces_np.astype(np.int32),
+                           vertex_colors=colors_u8.astype(np.uint8),
+                           process=False)
+    
+    # Export as PLY
+    mesh.export(output_name, file_type='ply')
+
+
+def create_instance_ply_RGB(path,output_name):
+    sd = torch.load(path, map_location="cpu", weights_only=False)
+
+    vertices = sd["triangles_points"]
+    print(vertices.shape)
+    triangle_indices = sd["_triangle_indices"]
+    print(triangle_indices.shape)
+    num_faces = triangle_indices.shape[0]
+    num_vertices = vertices.shape[0]
+
+    f_dc = sd["features_dc"]
+    print(f_dc.shape)
+    SH_C0 = 0.28209479177387814
+    colors = SH_C0 * f_dc + 0.5
+    colors = torch.clamp(colors, 0.0, 1.0)
+    colors_u8 = (colors * 255.0).round().to(torch.uint8).cpu().numpy().squeeze(1)
+    print(colors_u8.shape)
+
+    # Derive per-face instance ids from checkpoint instance features.
+    instance_data = sd.get("instance_feature", None)
+    if instance_data is not None:
+        instance_tensor = instance_data.detach().cpu()
+        faces_ids = torch.argmax(instance_tensor, dim=1).to(torch.int64)
+    else:
+        faces_ids = torch.zeros(triangle_indices.shape[0], dtype=torch.int64)
+
+
+    verts_np = vertices.detach().cpu().numpy().astype(np.float32)
+    faces_np = triangle_indices.detach().cpu().numpy().astype(np.int32)
+
+    vert_dtype = [
+        ("x", "f4"),
+        ("y", "f4"),
+        ("z", "f4"),
+        ("red", "u1"),
+        ("green", "u1"),
+        ("blue", "u1"),
+    ]
+    vert_data = np.empty(verts_np.shape[0], dtype=vert_dtype)
+    vert_data["x"] = verts_np[:, 0]
+    vert_data["y"] = verts_np[:, 1]
+    vert_data["z"] = verts_np[:, 2]
+    vert_data["red"] = colors_u8[:, 0]
+    vert_data["green"] = colors_u8[:, 1]
+    vert_data["blue"] = colors_u8[:, 2]
+
+    # Face schema:
+    # element face N
+    # property list uchar int vertex_indices
+    # property int mesh_id
+    # Save one PLY per instance id.
+    unique_instance_ids = torch.unique(faces_ids).tolist()
+    positive_instance_ids = [int(i) for i in unique_instance_ids if int(i) > 0]
+    if len(positive_instance_ids) > 0:
+        instance_ids_to_export = positive_instance_ids
+    else:
+        instance_ids_to_export = [int(i) for i in unique_instance_ids]
+
+    base, ext = os.path.splitext(output_name)
+    if ext == "":
+        ext = ".ply"
+
+    export_dir = "instance_ply_10"
+    os.makedirs(export_dir, exist_ok=True)
+
+    exported = 0
+    for instance_id in instance_ids_to_export:
+        mask = (faces_ids == instance_id)
+        if mask.sum().item() == 0:
+            continue
+
+        selected_faces = triangle_indices[mask]
+        vertices_indices = set(idx.item() for t in selected_faces for idx in t)
+        subset_vertices = []
+        index_map = {}
+        for i in range(num_vertices):
+            if i in vertices_indices:
+                subset_vertices.append(i)
+                index_map[i] = len(subset_vertices) - 1
+
+        if len(subset_vertices) == 0:
+            continue
+
+        orig_idx = torch.tensor(subset_vertices, dtype=torch.long)
+        sub_verts_np = verts_np[orig_idx.numpy()]
+        sub_colors_u8 = colors_u8[orig_idx.numpy()]
+
+        remapped_faces = np.array(
+            [[index_map[v.item()] for v in tri] for tri in selected_faces],
+            dtype=np.int32,
+        )
+
+        sub_vert_data = np.empty(sub_verts_np.shape[0], dtype=vert_dtype)
+        sub_vert_data["x"] = sub_verts_np[:, 0]
+        sub_vert_data["y"] = sub_verts_np[:, 1]
+        sub_vert_data["z"] = sub_verts_np[:, 2]
+        sub_vert_data["red"] = sub_colors_u8[:, 0]
+        sub_vert_data["green"] = sub_colors_u8[:, 1]
+        sub_vert_data["blue"] = sub_colors_u8[:, 2]
+
+        face_dtype = [("vertex_indices", "i4", (3,)), ("instance_id", "i4")]
+        sub_face_data = np.empty(remapped_faces.shape[0], dtype=face_dtype)
+        sub_face_data["vertex_indices"] = remapped_faces
+        sub_face_data["instance_id"] = np.full(remapped_faces.shape[0], instance_id, dtype=np.int32)
+
+        instance_output = f"{base}_instance_{instance_id}{ext}"
+        ply = PlyData(
+            [
+                PlyElement.describe(sub_vert_data, "vertex"),
+                PlyElement.describe(sub_face_data, "face"),
+            ],
+            text=False,
+        )
+        output_name = os.path.join(export_dir, f"{instance_output}")
+        ply.write(output_name)
+        print(
+            f"Saved instance mesh PLY: {instance_output} "
+            f"(instance {instance_id}, vertices {sub_verts_np.shape[0]}, faces {remapped_faces.shape[0]})"
+        )
+        exported += 1
+
+    if exported == 0:
+        print("No instance meshes were exported.")
+    
+
+
+def create_ply_sh(path,output_name,instance_trgl=None):
     # ── load checkpoint ──
     sd = torch.load(path, map_location="cpu", weights_only=False)
     print(f"Keys: {list(sd.keys())}")
@@ -195,8 +379,17 @@ def main():
         default="mesh_sh.ply",
         help="Name of the output PLY file (default: mesh_sh.ply)",
     )
+    parser.add_argument(
+        "--instance",
+        type=bool,
+        default=True,
+        help="WIP",
+    )
     args = parser.parse_args()
-    create_ply(args.path, args.output_name)
+    if args.instance == True:
+        create_instance_ply_RGB(args.path,args.output_name)
+    else:
+        create_ply_rgb(args.path, args.output_name)
 
 
 if __name__ == "__main__":
