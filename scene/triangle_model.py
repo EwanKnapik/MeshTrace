@@ -542,7 +542,7 @@ class TriangleModel:
         if training_args.include_feature:
             if self._instance_feature is None or self._instance_feature.shape[0] != self.vertices.shape[0]:
  
-                instance_feature = torch.randn((self._triangle_indices.shape[0], 10), device="cuda")
+                instance_feature = torch.randn((self._triangle_indices.shape[0], training_args.instance_feature_nbr), device="cuda")
                 # instance_feature = 1e-3 * torch.normal(mean=0.0, std=1.0, size=(self._xyz.shape[0], 16)).float().cuda()
                 self._instance_feature = nn.Parameter(instance_feature.requires_grad_(True))
             elif not isinstance(self._instance_feature, nn.Parameter):

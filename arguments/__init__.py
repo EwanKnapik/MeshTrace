@@ -83,6 +83,7 @@ class OptimizationParams(ParamGroup):
     def __init__(self, parser):
         self.include_feature=False#render feature
         self.instance_feature_lr=0.005
+        self.instance_feature_nbr=16
 
         self.iterations = 30_000
         self.position_lr_delay_mult = 0.01

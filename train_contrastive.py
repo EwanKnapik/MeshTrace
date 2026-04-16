@@ -67,6 +67,7 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
         if sam_mask.shape != rend_ids.shape:
             print(f"{'!'*10} sam_mask not same shape as rend_ids {'!'*10}")
 
+        triangle_instances=triangles.get_instance_feature
         max_triangle_id = triangle_instances.shape[0] - 1
         in_bounds_max = rend_ids <= max_triangle_id
         in_bounds_min = rend_ids >= 0

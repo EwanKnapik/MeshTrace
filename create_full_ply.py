@@ -149,19 +149,15 @@ def create_instance_ply_RGB(path,output_name):
     sd = torch.load(path, map_location="cpu", weights_only=False)
 
     vertices = sd["triangles_points"]
-    print(vertices.shape)
     triangle_indices = sd["_triangle_indices"]
-    print(triangle_indices.shape)
     num_faces = triangle_indices.shape[0]
     num_vertices = vertices.shape[0]
 
     f_dc = sd["features_dc"]
-    print(f_dc.shape)
     SH_C0 = 0.28209479177387814
     colors = SH_C0 * f_dc + 0.5
     colors = torch.clamp(colors, 0.0, 1.0)
     colors_u8 = (colors * 255.0).round().to(torch.uint8).cpu().numpy().squeeze(1)
-    print(colors_u8.shape)
 
     # Derive per-face instance ids from checkpoint instance features.
     instance_data = sd.get("instance_feature", None)
@@ -197,7 +193,7 @@ def create_instance_ply_RGB(path,output_name):
     # property int mesh_id
     # Save one PLY per instance id.
     unique_instance_ids = torch.unique(faces_ids).tolist()
-    positive_instance_ids = [int(i) for i in unique_instance_ids if int(i) > 0]
+    positive_instance_ids = [int(i) for i in unique_instance_ids if int(i) >= 0]
     if len(positive_instance_ids) > 0:
         instance_ids_to_export = positive_instance_ids
     else:
@@ -207,7 +203,18 @@ def create_instance_ply_RGB(path,output_name):
     if ext == "":
         ext = ".ply"
 
-    export_dir = "instance_ply_10"
+    scene_dir = path.split('/')
+    arg=scene_dir.index("point_cloud")
+    scene_dir = "/".join(scene_dir[:arg])
+    segment_dir="segmented_instances"
+    segment_dir=os.path.join(scene_dir,segment_dir)
+    os.makedirs(segment_dir, exist_ok=True)
+
+    files_list=os.listdir(segment_dir)
+    idxs=[int(file.split("_")[-1]) for file in files_list]
+    new_idx=max(idxs)+1
+
+    export_dir =os.path.join(segment_dir, f"instance_ply_{new_idx}")
     os.makedirs(export_dir, exist_ok=True)
 
     exported = 0
