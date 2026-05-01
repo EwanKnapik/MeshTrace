@@ -314,8 +314,21 @@ def readColmapSceneInfo(path, images, eval,sam_folder, llffhold=8, aug=False):
                            ply_path=ply_path)
     return scene_info
 
-def readCamerasFromTransforms(path, transformsfile, white_background, extension=".png"):
+def readCamerasFromTransforms(path, images, transformsfile, white_background, sam_folder='non',extension=".png"):
     cam_infos = []
+
+    image_set="train" if "train" in transformsfile else "test"
+    reading_dir = "images" if images == None else images
+    images_folder=os.path.join(path, reading_dir)
+    dataset="/".join(images_folder.split("/")[:-1])
+    if sam_folder in ['overlap','split','origin_overlap','pre_union','sam_origin_cover']:
+        print(f"Reading SAM masks from folder: {sam_folder}")
+        print(f"Looking for SAM masks in: {dataset}/sam/{sam_folder}/*.npy")
+        sam_paths = glob_data(os.path.join(dataset ,image_set , "sam" ,os.path.join(sam_folder) ,"*.npy"))
+    else:
+        sam_paths=None
+    sam_i=0
+
 
     with open(os.path.join(path, transformsfile)) as json_file:
         contents = json.load(json_file)
@@ -345,22 +358,40 @@ def readCamerasFromTransforms(path, transformsfile, white_background, extension=
 
             norm_data = im_data / 255.0
             arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
-            image = Image.fromarray(np.array(arr*255.0, dtype=np.byte), "RGB")
+            image = Image.fromarray(np.array(arr*255.0, dtype=np.uint8), "RGB")
 
             fovy = focal2fov(fov2focal(fovx, image.size[0]), image.size[1])
             FovY = fovy 
             FovX = fovx
 
+
+            #read sam masks
+            if (sam_paths is not None ):
+                sam_mask=np.load(sam_paths[sam_i])
+                sam_i+=1
+                id_masks=torch.from_numpy(sam_mask).cuda()
+                id_list=torch.unique(id_masks,sorted=True).cuda()
+                for j,id in enumerate(id_list):
+                    if id == 0:
+                        continue
+                    id_masks[id_masks==id]=j
+                id_masks=id_masks.cpu().numpy()
+            else:
+                id_masks=None
+
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1]))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1],sam_mask=id_masks))
             
     return cam_infos
 
-def readNerfSyntheticInfo(path, white_background, eval, extension=".png"):
+def readNerfSyntheticInfo(path, images, white_background, eval,sam_folder, extension=".png"):
+
+    
+    
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, "transforms_train.json", white_background, extension)
+    train_cam_infos = readCamerasFromTransforms(path, images, "transforms_train.json", white_background, sam_folder, extension)
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, "transforms_test.json", white_background, extension)
+    test_cam_infos = readCamerasFromTransforms(path, images, "transforms_test.json", white_background, sam_folder, extension)
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)

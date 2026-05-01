@@ -212,7 +212,10 @@ def create_instance_ply_RGB(path,output_name):
 
     files_list=os.listdir(segment_dir)
     idxs=[int(file.split("_")[-1]) for file in files_list]
-    new_idx=max(idxs)+1
+    if len(idxs)==0:
+        new_idx=0
+    else:
+        new_idx=max(idxs)+1
 
     export_dir =os.path.join(segment_dir, f"instance_ply_{new_idx}")
     os.makedirs(export_dir, exist_ok=True)
@@ -389,7 +392,7 @@ def main():
     parser.add_argument(
         "--instance",
         type=bool,
-        default=True,
+        default=False,
         help="WIP",
     )
     args = parser.parse_args()

@@ -8,7 +8,7 @@
 #SBATCH --error=error/error.%N.%J.%u.txt
 
 
-python render.py -m output/figurines/ &
+python render.py -m output/casque/ &
 wait
 
 

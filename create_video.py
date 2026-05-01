@@ -108,7 +108,7 @@ if __name__ == "__main__":
     render_path = os.path.join(traj_dir, "renders")
     os.makedirs(render_path, exist_ok=True)
     
-    n_frames = 240*5
+    n_frames = 120*5
     cam_traj = generate_path(scene.getTrainCameras(), n_frames=n_frames)
 
     

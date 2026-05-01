@@ -8,7 +8,7 @@ import os
 
 from utils.con_mask_utils import SegmentationMask
 from utils.render_utils import save_img_u8
-from triangle_renderer.trace_triangle import trace
+from triangle_renderer.trace_triangle import trace, trace_masks
 from triangle_renderer import TriangleModel
 from scene import Scene
 from conf.con_masks_conf import *
@@ -26,7 +26,15 @@ from PIL import Image
 from create_full_ply import create_ply_rgb
 import colorsys
 import time
+import matplotlib
 
+
+def sixel_fig():
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight')
+
+    writer = sixel.SixelWriter()
+    writer.draw(buffer)
 
 # fixed palette: 256 deterministic colors (RGB triplets 0-255) for indexed PNGs
 fixed_palette = []
@@ -277,11 +285,42 @@ def adjust_id_across_views(dataset, pipe, triangles, background, camera_stack,nu
     return total_list
 
 
+def compute_weights(camera_stack: List,
+                    pipe,
+                    triangles: TriangleModel,
+                    background: torch.Tensor,
+                    alpha_w:bool=False,
+                    mask_type:str='mask') -> torch.Tensor:
+    weights = torch.zeros((triangles.get_vertex_weight.shape[0], 
+                            len(camera_stack))).cuda()#[p,view]
+    
+    for idx, camera in enumerate(camera_stack):
+        sam_mask = torch.from_numpy(camera.sam_mask.copy()).to(device="cuda", dtype=torch.long)
+        w = trace(camera, triangles, sam_mask, pipe, background, alpha_w)#[p,class]
+        unseen = (w.sum(-1) == 0)
+        w = torch.argmax(w, dim=-1)
+        w[unseen] = UNSEEN_VALUE
+        weights[:, idx] = w
+        
+    return weights
 
 
+def compute_similarity(camera,
+triangles: TriangleModel,
+pipe,
+background: torch.Tensor,
+weights: torch.Tensor,
+mask1: torch.Tensor,
+mask2: torch.Tensor
+):
+    list_triangles_1,list_triangles_2=trace_masks(camera, triangles, mask1, mask2, pipe, background)
+
+
+    return
 
 
 def main():
+    matplotlib.rcParams["backend"] = "Agg"
     parser = ArgumentParser(description="Extract objects — triangle splatting mask repair")
     model = ModelParams(parser, sentinel=True)
     pipeline = PipelineParams(parser)
@@ -304,25 +343,33 @@ def main():
                   set_sigma=None,
                   load_iteration=-1,
                   shuffle=False)
-    #trngl_list = do_cool_stuff(dataset, pipe, triangles, background, scene.getTrainCameras(), args.id)
-    total_list = adjust_id_across_views(dataset, pipe, triangles, background, scene.getTrainCameras(),args.num)
+    
+    # Per view: tensor of shape (num_masks_in_view, H, W), dtype=bool.
 
-    checkpoint_path = os.path.join(
-        scene.model_path,
-        "point_cloud",
-        f"iteration_{scene.loaded_iter}",
-        "point_cloud_state_dict.pt",
-    )
-    export_dir = os.path.join(scene.model_path, f"instance_ply_{args.num}",)
-    os.makedirs(export_dir, exist_ok=True)
+    start=time.time()
+    per_view_binary_masks = []
+    weights = compute_weights(scene.getTrainCameras(),pipe,triangles,background)
+    for idx, camera in enumerate(scene.getTrainCameras()):
+        sam_mask = torch.from_numpy(camera.sam_mask.copy()).to(device="cuda", dtype=torch.long)
 
-    print(f"Exporting {len(total_list)} instances to {export_dir}")
-    for instance_id, tri_ids in enumerate(total_list, start=1):
-        if not tri_ids:
-            print(f"Skipping instance {instance_id}: empty triangle set")
-            continue
-        output_name = os.path.join(export_dir, f"instance_{instance_id:04d}.ply")
-        create_ply_rgb(checkpoint_path, output_name, list(tri_ids))
+        # Build binary masks for all labels in this view (excluding 0/background).
+        labels = torch.unique(sam_mask)
+        labels = labels[labels > 0]
+
+        view_masks = sam_mask.unsqueeze(0) == labels.view(-1, 1, 1)
+
+        per_view_binary_masks.append(view_masks)
+
+    end=time.time()
+    
+    print(f"{end-start} seconds elapseds")
+    t = torch.cuda.get_device_properties(0).total_memory
+    r = torch.cuda.memory_reserved(0)
+    a = torch.cuda.memory_allocated(0)
+    f = r-a  # free inside reserved
+    print(f"free {f}, total {t}, reserved {r}, allocated {a}")
+
+    
 
 
 

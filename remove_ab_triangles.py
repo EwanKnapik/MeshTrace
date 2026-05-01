@@ -1,7 +1,4 @@
 #
-# Adapted from remove_ab_gaus.py for triangle splatting.
-#
-# Original copyright:
 # Copyright (C) 2023, Inria
 # GRAPHDECO research group, https://team.inria.fr/graphdeco
 # All rights reserved.
@@ -80,7 +77,7 @@ def get_weights(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=Fals
             id_masks = torch.tensor(sam_mask, dtype=torch.int16, device="cpu")
             id_masks = id_masks.cuda()
             id_masks[id_masks > 1] = 0
-            w = trace(view, triangles, id_masks, id_masks.max(), pipe, background, alpha_w=alpha_w)
+            w = trace(view, triangles, id_masks, pipe, background, alpha_w=alpha_w)
             unseen_mask = (w.sum(-1) == 0)
             w = torch.argmax(w, dim=-1)
             w[unseen_mask] = -1
@@ -123,7 +120,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     tb_writer = prepare_output_and_logger(dataset)
     triangles = TriangleModel(dataset.sh_degree)
     scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma, load_iteration=-1)
-    triangles.training_setup(opt, opt.feature_lr, opt.weight_lr, opt.lr_triangles_points_init)
+    triangles.training_setup(opt)
     first_iter = 0
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]

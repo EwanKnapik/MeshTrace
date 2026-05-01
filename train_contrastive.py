@@ -23,13 +23,36 @@ from tqdm import tqdm
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams
 
+import numpy as np
+from sixel import converter, sixel
+from io import BytesIO
+import matplotlib.pyplot as plt
+from PIL import Image
+from create_full_ply import create_ply_rgb
+import colorsys
+import time
+import matplotlib
+
+
+def sixel_fig():
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight')
+
+    writer = sixel.SixelWriter()
+    writer.draw(buffer)
+
+# fixed palette: 256 deterministic colors (RGB triplets 0-255) for indexed PNGs
+fixed_palette = []
+for i in range(256):
+    r, g, b = colorsys.hsv_to_rgb(i / 256.0, 0.65, 0.95)
+    fixed_palette.extend([int(r * 255), int(g * 255), int(b * 255)])
 
 
 def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name):
     first_iter = 0
     triangles = TriangleModel(dataset.sh_degree)
     scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma)
-    triangles.training_setup(opt, opt.feature_lr, opt.weight_lr, opt.lr_triangles_points_init)
+    triangles.training_setup(opt)
 
     model_params = torch.load(checkpoint,weights_only=False)
     triangles.restore(model_params, opt)
@@ -72,6 +95,18 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
         in_bounds_max = rend_ids <= max_triangle_id
         in_bounds_min = rend_ids >= 0
         in_bounds=in_bounds_min & in_bounds_max
+        print(render_pkg["full_image"].shape)
+        plt.imshow(render_pkg["full_image"].permute(1, 2, 0).cpu().detach().numpy())
+
+        if iteration % 500 ==0:
+
+            for_display = torch.where(in_bounds, rend_ids, torch.zeros_like(rend_ids))
+            instance_features_for_display=triangle_instances[for_display]
+            print(instance_features_for_display.shape)
+            plt.imshow(instance_features_for_display.cpu().detach().numpy()[:,:,0],cmap='gray')
+            plt.axis('off')
+            sixel_fig()
+
         rend_ids=rend_ids[in_bounds]
 
         instance_features=triangle_instances[rend_ids]

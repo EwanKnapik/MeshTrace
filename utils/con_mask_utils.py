@@ -118,95 +118,6 @@ def process_mask(mask):
     return patch_mask
 
 
-def align_instance_ids_across_views(masks,
-                                    weights: torch.Tensor,
-                                    ref_view: int = 0,
-                                    unseen: int = -1,
-                                    bg_id: int = BG_ID,
-                                    iou_th: float = 0.2) -> None:
-    if len(masks) == 0:
-        return
-
-    view_to_mask = {m.view: m for m in masks}
-    if ref_view not in view_to_mask:
-        ref_view = masks[0].view
-
-    num_triangles = weights.shape[0]
-    device = weights.device
-
-    prototypes = {}
-    ref_labels = weights[:, ref_view].long()
-    ref_valid = valid_weight_mask(ref_labels, unseen=unseen, bg_id=bg_id)
-    ref_ids = torch.unique(ref_labels[ref_valid], sorted=True)
-
-    for gid in ref_ids:
-        tri_mask = (ref_labels == gid)
-        if tri_mask.any():
-            prototypes[int(gid.item())] = tri_mask
-
-    next_gid = int(ref_ids.max().item()) + 1 if len(ref_ids) > 0 else 1
-
-    ordered_views = [ref_view] + [m.view for m in masks if m.view != ref_view]
-    for view in ordered_views:
-        mask_obj = view_to_mask[view]
-        curr_labels = weights[:, view].long()
-
-        valid = valid_weight_mask(curr_labels, unseen=unseen, bg_id=bg_id)
-        if valid.sum() == 0:
-            continue
-
-        cls_ids, cls_counts = torch.unique(curr_labels[valid], return_counts=True)
-        order = torch.argsort(cls_counts, descending=True)
-        cls_ids = cls_ids[order]
-
-        mapping = {}
-        for cls_id in cls_ids:
-            tri_mask = (curr_labels == cls_id)
-            tri_count = int(tri_mask.sum().item())
-            if tri_count == 0:
-                continue
-
-            best_gid = None
-            best_iou = 0.0
-
-            for gid, proto in prototypes.items():
-                inter = (tri_mask & proto).sum().item()
-                if inter == 0:
-                    continue
-                union = (tri_mask | proto).sum().item()
-                iou = inter / max(union, 1)
-                if iou > best_iou:
-                    best_iou = iou
-                    best_gid = gid
-
-            if best_gid is None or best_iou < iou_th:
-                best_gid = next_gid
-                next_gid += 1
-
-            mapping[int(cls_id.item())] = int(best_gid)
-            if best_gid in prototypes:
-                prototypes[best_gid] = prototypes[best_gid] | tri_mask
-            else:
-                prototypes[best_gid] = tri_mask.clone().to(device=device)
-
-        mask_obj.remap_instance_ids(mapping)
-
-    global_ids = []
-    for mask_obj in masks:
-        ids = torch.unique(mask_obj.mask)
-        ids = ids[ids != bg_id]
-        if len(ids) > 0:
-            global_ids.append(ids.long())
-
-    if len(global_ids) == 0:
-        return
-
-    global_ids = torch.unique(torch.cat(global_ids), sorted=True)
-    compact_mapping = {int(old_id.item()): new_id + 1 for new_id, old_id in enumerate(global_ids)}
-    for mask_obj in masks:
-        mask_obj.remap_instance_ids(compact_mapping)
-
-
 class SegmentationMask:
     def __init__(self, sam_masks, view, image_name):
         self.view = view
@@ -282,26 +193,6 @@ class SegmentationMask:
         self.repaired_mask = self.mask.clone()
 
         return pairs
-
-    def remap_instance_ids(self, mapping):
-        if mapping is None or len(mapping) == 0:
-            return
-
-        remapped_mask = self.mask.clone()
-        for src_id, dst_id in mapping.items():
-            remapped_mask[self.mask == src_id] = dst_id
-        self.mask = remapped_mask.to(torch.int16)
-
-        if hasattr(self, 'repaired_mask') and self.repaired_mask is not None:
-            remapped_repaired = self.repaired_mask.clone()
-            for src_id, dst_id in mapping.items():
-                remapped_repaired[self.repaired_mask == src_id] = dst_id
-            self.repaired_mask = remapped_repaired.to(torch.int16)
-
-        remapped_repair_area = self.repair_area.clone()
-        for src_id, dst_id in mapping.items():
-            remapped_repair_area[self.repair_area == src_id] = dst_id
-        self.repair_area = remapped_repair_area.to(torch.int16)
 
     def _change_class_id(self, before, after):
         assert before != 0, 'Changing the background is illegal'
@@ -464,6 +355,7 @@ class SegmentationMask:
             'top_row': [
                 self.visual(self.origin_mask),
                 self._visualize_conflicts(),
+                #torch.ones(self.visual(self.origin_mask).shape).cuda(),
             ],
             'bottom_row': [
                 self.visual(self.repaired_mask),

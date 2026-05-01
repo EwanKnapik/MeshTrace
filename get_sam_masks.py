@@ -42,7 +42,7 @@ def glob_data(data_dir):
     data_paths = sorted(data_paths)
     return data_paths
 
-if __name__ == "__main__":
+def main():
     parser = ArgumentParser(description="SAM segmentation")
     parser.add_argument('--sam_checkpoint', type=str, default='/mnt/fillipo/shenhongyu/model/SAM/sam_vit_h_4b8939.pth')
     parser.add_argument('--file_path', type=str, help='Path to the images folder.')
@@ -58,28 +58,38 @@ if __name__ == "__main__":
         stability_score_thresh=.9,
 
     )#for llff
-    
-    save_folder = 'origin'
-    SAM = 'sam'
-    save_path = os.path.join(os.path.dirname(args.file_path), SAM, save_folder)
-    os.makedirs(save_path, exist_ok=True)
-    image_paths = glob_data(os.path.join(args.file_path, "*.*"))
+    for dir in os.listdir(args.file_path):
+        if dir in ["train","test","val","images"]:
+            
+            save_folder = 'origin'
+            SAM = 'sam'
+            file_path=os.path.join(args.file_path,dir)
+            save_path = os.path.join(file_path, SAM, save_folder)
+            os.makedirs(save_path, exist_ok=True)
+            image_paths = glob_data(os.path.join(file_path, "*.*"))
+            
 
-    print('Load {} images.'.format(len(image_paths)))
-    for image_path in tqdm(image_paths):
-        image_name = os.path.basename(image_path).split('.')[0]
-        image = imread(image_path)
-        results = mask_generator.generate(image)
-        masks = []
-        for r in results:
-            masks.append(r['segmentation'].astype(bool))
-        masks = np.array(masks)
-        for m, mask in enumerate(masks):
-            union = (mask & masks[m + 1:]).sum(axis=(1, 2), keepdims=True)
-            masks[m + 1:] |= mask & (union > .9 * mask.sum(axis=(0, 1), keepdims=True))
-        np.save(os.path.join(save_path, f'{image_name}.npy'), masks)
-        masks = torch.from_numpy(masks).cuda()
-        visual_mask = visual_masks(masks)
-        plt.imsave(os.path.join(save_path, f'{image_name}_sam.png'), visual_mask.cpu().numpy())
+            print('Load {} images.'.format(len(image_paths)))
+            for image_path in tqdm(image_paths):
+                image_name = os.path.basename(image_path).split('.')[0]
+                image = imread(image_path)
+                results = mask_generator.generate(image)
+                masks = []
+                for r in results:
+                    masks.append(r['segmentation'].astype(bool))
+                masks = np.array(masks)
+                for m, mask in enumerate(masks):
+                    union = (mask & masks[m + 1:]).sum(axis=(1, 2), keepdims=True)
+                    masks[m + 1:] |= mask & (union > .9 * mask.sum(axis=(0, 1), keepdims=True))
+                np.save(os.path.join(save_path, f'{image_name}.npy'), masks)
+                masks = torch.from_numpy(masks).cuda()
+                visual_mask = visual_masks(masks)
+                plt.imsave(os.path.join(save_path, f'{image_name}_sam.png'), visual_mask.cpu().numpy())
+
+
+
+
+if __name__ == "__main__":
+    main()
 
            

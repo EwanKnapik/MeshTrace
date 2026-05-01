@@ -172,6 +172,16 @@ class TriangleModel:
 
         mkdir_p(path)
 
+        files_list=os.listdir(path)
+        idxs=[]
+        for file in files_list:
+            idxs.append(int(file.split("_")[-1].split(".")[0]) if file.split("_")[-1].split(".")[0].isnumeric() else 0)
+
+        #idxs=[int(file.split("_")[-1]) if file.split("_")[-1].isnumeric() else 0 for file in files_list]
+       # print(idxs)
+       # new_idx=max(idxs,0)+1
+       # print(f'new index {new_idx}')
+
         point_cloud_state_dict = {}
 
         point_cloud_state_dict["triangles_points"] = self.vertices
@@ -187,7 +197,8 @@ class TriangleModel:
         point_cloud_state_dict["pixel_count"] = self.pixel_count
         point_cloud_state_dict["opt_dict"] = self.optimizer.state_dict()
 
-        torch.save(point_cloud_state_dict, os.path.join(path, 'point_cloud_state_dict.pt'))
+        new_idx=1
+        torch.save(point_cloud_state_dict, os.path.join(path, f'point_cloud_state_dict_{new_idx}.pt'))
 
 
     def load_ply_file(self, path, device="cuda", active_sh_degree=3, assume_yup_to_zup=False, training_args=None):
@@ -293,7 +304,7 @@ class TriangleModel:
 
     def load_parameters(self, path, device="cuda", segment=False, ratio_threshold = 0.75):
         # 1. Load the dict you saved
-        state = torch.load(os.path.join(path, "point_cloud_state_dict.pt"), map_location=device)
+        state = torch.load(os.path.join(path, "point_cloud_state_dict.pt"),weights_only=False, map_location=device)
 
         # 2. Restore everything you put in there (one line each)
         self.vertices            = state["triangles_points"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
@@ -373,9 +384,6 @@ class TriangleModel:
 
         self.training_setup(
             training_args,
-            training_args.feature_lr,
-            training_args.weight_lr,
-            training_args.lr_triangles_points_init,
         )
 
         if opt_dict is None:
@@ -537,7 +545,7 @@ class TriangleModel:
 
       
   
-    def training_setup(self, training_args, lr_features, weight_lr, lr_triangles_init):
+    def training_setup(self, training_args):
 
         if training_args.include_feature:
             if self._instance_feature is None or self._instance_feature.shape[0] != self.vertices.shape[0]:
@@ -554,16 +562,16 @@ class TriangleModel:
             ]
         else:
             l = [
-                {'params': [self._features_dc], 'lr': lr_features, "name": "f_dc"},
-                {'params': [self._features_rest], 'lr': lr_features / 20.0, "name": "f_rest"},
-                {'params': [self.vertices], 'lr': lr_triangles_init, "name": "vertices"},
-                {'params': [self.vertex_weight], 'lr': weight_lr, "name": "vertex_weight"}
+                {'params': [self._features_dc], 'lr': training_args.feature_lr, "name": "f_dc"},
+                {'params': [self._features_rest], 'lr': training_args.feature_lr / 20.0, "name": "f_rest"},
+                {'params': [self.vertices], 'lr': training_args.lr_triangles_points_init, "name": "vertices"},
+                {'params': [self.vertex_weight], 'lr': training_args.weight_lr, "name": "vertex_weight"}
             ]
 
         self.optimizer = torch.optim.Adam(l, lr=0.0, eps=1e-15)
 
-        self.triangle_scheduler_args = get_expon_lr_func(lr_init=lr_triangles_init,
-                                                        lr_final=lr_triangles_init/100,
+        self.triangle_scheduler_args = get_expon_lr_func(lr_init=training_args.lr_triangles_points_init,
+                                                        lr_final=training_args.lr_triangles_points_init/100,
                                                         lr_delay_mult=training_args.position_lr_delay_mult,
                                                         max_steps=training_args.position_lr_max_steps)
 

@@ -8,7 +8,7 @@
 #SBATCH --error=error/error.%N.%J.%u.txt
 
 
-python train.py -s ~/input/POLY_01 -m output/POLY_01 --eval --indoor &
+python train.py -s ~/input/nerf_synthetic/hotdog -m output/hotdog  --eval  &
 wait
 
 
