@@ -64,6 +64,7 @@ class ModelParams(ParamGroup):
         self.data_device = "cuda"
         self.eval = False
         self.sam_folder = "-"
+        self.stride=1
         super().__init__(parser, "Loading Parameters", sentinel)
 
     def extract(self, args):
@@ -157,6 +158,8 @@ class OptimizationParams(ParamGroup):
         self.sample_num = 4096
         self.feature_dim = 16
         self.contrastive_lr = 0.001
+        self.grad_vis_interval = 0
+        self.grad_vis_dir = "grad_vis"
 
         super().__init__(parser, "Optimization Parameters")
 
@@ -200,4 +203,3 @@ def update_indoor(params):
     params.depth_lambda_final = 0.0
     params.iteration_mesh = 12000
     return params
-

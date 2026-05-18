@@ -7,8 +7,8 @@ MIN_IOU_THRESHOLD = 0.05
 
 DEFAULT_SAM_FOLDER = "sam"
 ORIGIN_FOLDER = "origin"
-SPLIT_FOLDER = "split"
-COMPARE_FOLDER = "compare"
-NORMALIZE_FOLDER = "norm"
+SPLIT_FOLDER = "split_ms"
+COMPARE_FOLDER = "compare_ms"
+NORMALIZE_FOLDER = "norm_ms"
 
 # MASK_RESULT_PATTERN = "rgb_{}.npy"

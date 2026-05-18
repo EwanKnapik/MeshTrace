@@ -26,6 +26,7 @@ from scene.dataset_readers import sceneLoadTypeCallbacks
 from scene.triangle_model import TriangleModel
 from arguments import ModelParams
 from utils.camera_utils import cameraList_from_camInfos, camera_to_JSON
+from scene.read_semantic_replica import read_semantic_ReplicaInfo
 
 class Scene:
 
@@ -49,7 +50,10 @@ class Scene:
         self.train_cameras = {}
         self.test_cameras = {}
 
-        if os.path.exists(os.path.join(args.source_path, "sparse")):
+        if os.path.exists(os.path.join(args.source_path, "traj_w_c.txt")):
+            print("Found traj_w_c.txt file, assuming semantic Replica data set!")
+            scene_info = read_semantic_ReplicaInfo(args.source_path, args.stride, args.sam_folder)
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
             scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, args.sam_folder)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")

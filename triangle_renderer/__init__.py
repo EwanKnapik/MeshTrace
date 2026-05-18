@@ -17,9 +17,16 @@
 #
 # For inquiries contact jan.held@uliege.be
 #
+import sys
+from pathlib import Path
 
 import torch
 import math
+
+_RASTERIZER_SUBMODULE = Path(__file__).resolve().parents[1] / "submodules" / "diff-triangle-mesh-rasterization"
+if str(_RASTERIZER_SUBMODULE) not in sys.path:
+    sys.path.insert(0, str(_RASTERIZER_SUBMODULE))
+
 from diff_triangle_rasterization import TriangleRasterizationSettings, TriangleRasterizer
 from scene.triangle_model import TriangleModel
 from utils.sh_utils import eval_sh
@@ -108,10 +115,18 @@ def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, 
     """
 
     
-    triangles_indices = pc.get_triangle_indices  # the idx of the 3 vertices of each triangl
-    vertices = pc.get_vertices # contains all the vertices of the triangles
-    vertex_weights = pc.get_vertex_weight  # contains the weights of the vertices for each vertex in the triangles
-    scaling = torch.zeros_like(triangles_indices[:, 0], dtype=pc.get_triangles_points.dtype, requires_grad=True, device="cuda").detach()
+    triangles_indices = pc.get_triangle_indices.contiguous()  # the idx of the 3 vertices of each triangl
+    vertices = pc.get_vertices.contiguous()  # contains all the vertices of the triangles
+    vertex_weights = pc.get_vertex_weight.reshape(-1).contiguous()  # one scalar weight per vertex
+    bg_color = bg_color.contiguous()
+    viewmatrix = viewpoint_camera.world_view_transform.contiguous()
+    projmatrix = viewpoint_camera.full_proj_transform.contiguous()
+    camera_center = viewpoint_camera.camera_center.contiguous()
+    scaling = torch.zeros(
+        triangles_indices.shape[0],
+        dtype=vertices.dtype,
+        device=vertices.device,
+    )
 
     vertex_index = pc._triangle_indices.shape[0]
 
@@ -134,10 +149,10 @@ def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, 
         tanfovy=tanfovy,
         bg=bg_color,
         scale_modifier=scaling_modifier,
-        viewmatrix=viewpoint_camera.world_view_transform,
-        projmatrix=viewpoint_camera.full_proj_transform,
+        viewmatrix=viewmatrix,
+        projmatrix=projmatrix,
         sh_degree=pc.active_sh_degree,
-        campos=viewpoint_camera.camera_center,
+        campos=camera_center,
         prefiltered=False,
         debug=pipe.debug
     )
@@ -152,22 +167,23 @@ def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, 
     colors_precomp = None
     if override_color is None:
         if pipe.convert_SHs_python:
-            shs_view = pc.get_features.transpose(1, 2).view(-1, 3, (pc.max_sh_degree+1)**2)
-            dir_pp = (pc.get_xyz - viewpoint_camera.camera_center.repeat(pc.get_features.shape[0], 1))
+            features = pc.get_features.contiguous()
+            shs_view = features.transpose(1, 2).contiguous().view(-1, 3, (pc.max_sh_degree + 1) ** 2)
+            dir_pp = (vertices - camera_center.repeat(features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
             colors_precomp = torch.clamp_min(sh2rgb + 0.5, 0.0)
         else:
-            shs = pc.get_features
+            shs = pc.get_features.contiguous()
 
     else:
-        colors_precomp = override_color
+        colors_precomp = override_color.contiguous()
 
     # Rasterize visible triangles to image, obtain their radii (on screen). 
     rendered_image, radii, scaling, allmap, max_blending, was_rendered  = rasterizer(
         vertices=vertices,
         triangles_indices=triangles_indices,
-        vertex_weights=vertex_weights.squeeze(),
+        vertex_weights=vertex_weights,
         sigma=sigma,
         shs = shs,
         colors_precomp = colors_precomp,
@@ -187,9 +203,9 @@ def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, 
     vertex_rendered = torch.zeros(V, device=triangles_indices.device, dtype=was_rendered.dtype)
     vertex_rendered.index_fill_(0, idx, 1)
 
-    vertices_cam = transform_point_4x3(vertices, viewpoint_camera.world_view_transform,)  # (V, 3)
+    vertices_cam = transform_point_4x3(vertices, viewmatrix)  # (V, 3)
     vertex_depths_pytorch =vertices_cam[:, 2]  # (V,)
-    image_2D_pytorch = compute_image_2d_pytorch_exact(vertices, viewpoint_camera.full_proj_transform, W_init, H_init)
+    image_2D_pytorch = compute_image_2d_pytorch_exact(vertices, projmatrix, W_init, H_init)
     
     rets =  {"render": rendered_image_small,
             "visibility_filter" : radii > 0,
@@ -216,7 +232,7 @@ def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, 
     img_hr = render_normal.unsqueeze(0)  # -> [1, 3, H, W]
     img_ds_area = F.interpolate(img_hr, size=(H_init, W_init), mode="area")  # [1, 3, H0, W0]
     render_normal = img_ds_area.squeeze(0)
-    render_normal = (render_normal.permute(1,2,0) @ (viewpoint_camera.world_view_transform[:3,:3].T)).permute(2,0,1)
+    render_normal = (render_normal.permute(1,2,0) @ (viewmatrix[:3, :3].T)).permute(2,0,1)
     
     # get median depth map
     render_depth_median = allmap[5:6]

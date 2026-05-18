@@ -2,13 +2,23 @@ import torch
 import math
 import torch.nn.functional as F
 from triangle_renderer import render
-from diff_triangle_rasterization import TriangleRasterizationSettings, TriangleRasterizer
 from scene.triangle_model import TriangleModel
 
 
 def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
           alpha_w=False, scaling_modifier=1.0, override_color=None):
-    render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
+    try:
+        render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
+    except RuntimeError as exc:
+        if "doesn't have storage" not in str(exc):
+            raise
+        num_triangles = pc.get_triangle_indices.shape[0]
+        max_mask_id = int(id_masks.max().item()) if id_masks.numel() > 0 else 0
+        num_mask_ids = max(max_mask_id + 1, 1)
+        view_name = getattr(viewpoint_camera, "image_name", "<unknown>")
+        print(f"Skipping view '{view_name}' because the triangle rasterizer returned an empty temporary buffer.")
+        return torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
+
     rend_ids = render_pkg["rend_ids"][0].long()
     if id_masks.shape != rend_ids.shape:
         print(f"{'!' * 10} sam_mask not same shape as rend_ids {'!' * 10}")
@@ -27,13 +37,10 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
     num_mask_ids = max(max_mask_id + 1, 1)
 
     weights = torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
-    totals = torch.zeros((num_triangles,), device=id_masks.device, dtype=torch.long)
-
     if flat_rend_ids.numel() > 0:
         linear_idx = flat_rend_ids * num_mask_ids + flat_masks
         counts = torch.bincount(linear_idx, minlength=num_triangles * num_mask_ids).float()
         counts = counts.view(num_triangles, num_mask_ids)
-        totals = counts.sum(dim=1).long()
         denom = counts.sum(dim=1, keepdim=True).clamp(min=1.0)
         weights = counts / denom
     return weights

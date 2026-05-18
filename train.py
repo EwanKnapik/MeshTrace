@@ -76,7 +76,7 @@ def training(
 
     scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma)
 
-    triangles.training_setup(opt, opt.feature_lr, opt.weight_lr, opt.lr_triangles_points_init)
+    triangles.training_setup(opt)
     triangles.add_percentage = opt.add_percentage
 
 
@@ -373,6 +373,7 @@ def training(
     triangles.importance_score = torch.zeros((triangles._triangle_indices.shape[0]), dtype=torch.float, device="cuda")
     while viewpoint_stack:
         viewpoint_cam = viewpoint_stack.pop(0)
+        print(triangles.get_triangle_indices.shape)
         render_pkg = render(viewpoint_cam, triangles, pipe, bg)
 
         importance_score = render_pkg["max_blending"].detach()

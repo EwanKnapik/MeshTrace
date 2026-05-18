@@ -56,6 +56,9 @@ class CameraInfo(NamedTuple):
     depth_params: dict = None  
     depth_path: str = ""     
     sam_mask:np.array = None
+    depth:np.array = None #gt depth
+    instance_image:np.array = None  #gt instance mask
+    features:np.array = None #sam features, for faster online inference, only used in replica
     
 
 class SceneInfo(NamedTuple):
@@ -105,7 +108,7 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
     dataset="/".join(images_folder.split("/")[:-1])
 
     cam_infos = []
-    if sam_folder in ['overlap','split','origin_overlap','pre_union','sam_origin_cover']:
+    if sam_folder in ['overlap','split_ms','origin_overlap','pre_union','sam_origin_cover']:
         print(f"Reading SAM masks from folder: {sam_folder}")
         print(f"Looking for SAM masks in: {dataset}/sam/{sam_folder}/*.npy")
         sam_paths = glob_data(os.path.join(dataset , "sam" ,sam_folder ,"*.npy"))

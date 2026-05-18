@@ -19,7 +19,7 @@ def load_scene(scene_dir, device="cpu"):
        # path=os.path.join(scene_dir, "././split/chkpnt/sp_20000.pth")
        # if not os.path.isfile(path):
        #     raise FileNotFoundError(f"Could not find '{path}'")
-    sd = torch.load(path, map_location=device)
+    sd = torch.load(path, map_location=device, weights_only=False)
 
     # base mesh
     verts   = sd["triangles_points"].to(device).to(torch.float32)   # [V,3]

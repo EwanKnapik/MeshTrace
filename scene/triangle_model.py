@@ -177,10 +177,13 @@ class TriangleModel:
         for file in files_list:
             idxs.append(int(file.split("_")[-1].split(".")[0]) if file.split("_")[-1].split(".")[0].isnumeric() else 0)
 
-        #idxs=[int(file.split("_")[-1]) if file.split("_")[-1].isnumeric() else 0 for file in files_list]
-       # print(idxs)
-       # new_idx=max(idxs,0)+1
-       # print(f'new index {new_idx}')
+        idxs=[int(file.split("_")[-1]) if file.split("_")[-1].isnumeric() else 0 for file in files_list]
+        print(idxs)
+        if len(idxs)==0:
+            new_idx=0
+        else:
+            new_idx=max(idxs)+1
+        print(f'new index {new_idx}')
 
         point_cloud_state_dict = {}
 
@@ -197,8 +200,9 @@ class TriangleModel:
         point_cloud_state_dict["pixel_count"] = self.pixel_count
         point_cloud_state_dict["opt_dict"] = self.optimizer.state_dict()
 
-        new_idx=1
+        #new_idx=1
         torch.save(point_cloud_state_dict, os.path.join(path, f'point_cloud_state_dict_{new_idx}.pt'))
+        #torch.save(point_cloud_state_dict, os.path.join(path, 'point_cloud_state_dict.pt'))
 
 
     def load_ply_file(self, path, device="cuda", active_sh_degree=3, assume_yup_to_zup=False, training_args=None):
@@ -457,7 +461,7 @@ class TriangleModel:
         return self._instance_feature
 
     def set_instance_feature(self, instance_features):
-        assert instance_features.shape[0] == self.vertices.shape[0]
+        assert instance_features.shape[0] == self._triangle_indices.shape[0]
         self._instance_feature = instance_features
        
     @property
@@ -546,11 +550,13 @@ class TriangleModel:
       
   
     def training_setup(self, training_args):
+        print(training_args.include_feature)
 
         if training_args.include_feature:
-            if self._instance_feature is None or self._instance_feature.shape[0] != self.vertices.shape[0]:
+            triangle_count = self._triangle_indices.shape[0]
+            if self._instance_feature is None or self._instance_feature.shape[0] != triangle_count:
  
-                instance_feature = torch.randn((self._triangle_indices.shape[0], training_args.instance_feature_nbr), device="cuda")
+                instance_feature = torch.randn((triangle_count, training_args.instance_feature_nbr), device="cuda")
                 # instance_feature = 1e-3 * torch.normal(mean=0.0, std=1.0, size=(self._xyz.shape[0], 16)).float().cuda()
                 self._instance_feature = nn.Parameter(instance_feature.requires_grad_(True))
             elif not isinstance(self._instance_feature, nn.Parameter):

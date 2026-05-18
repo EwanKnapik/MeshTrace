@@ -1,405 +1,743 @@
+"""Export full or segmented mesh-splatting checkpoints as PLY files."""
+
 import argparse
-import os
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Optional
+
 import numpy as np
 import torch
 from plyfile import PlyData, PlyElement
-import trimesh
 
 
-def save_ply_with_sh(verts, faces, features_dc, features_rest, opacities,
-                     sigma_value, active_sh_degree, max_sh_degree, path):
-    """
-    Save a PLY file with full spherical harmonics data for rendering engines
-    (e.g. Unity, Unreal, custom WebGL viewers).
+SH_C0 = 0.28209479177387814
+DEFAULT_SEED_SAMPLE_SIZE = 4096
+DEFAULT_ASSIGN_BATCH_SIZE = 32768
+DEFAULT_CLUSTER_REFINE_ITERS = 4
 
-    Vertex properties:
-      x, y, z              – position (float32)
-      f_dc_0..f_dc_2       – 0th-order (DC) SH coefficients for R, G, B (float32)
-      f_rest_0..f_rest_44  – higher-order SH coefficients (float32)
-                             Layout: [R_c0..R_c14, G_c0..G_c14, B_c0..B_c14]
-                             (follows the 3D Gaussian Splatting convention)
-      opacity              – per-vertex opacity in logit space (float32)
-                             actual_opacity = sigmoid(opacity)
-      sigma                – per-vertex sigma (float32)
 
-    Face properties:
-      vertex_indices       – 3 vertex indices per triangle (int32)
+@dataclass(frozen=True)
+class MeshCheckpoint:
+    active_sh_degree: int
+    vertices: torch.Tensor
+    triangle_indices: torch.Tensor
+    features_dc: torch.Tensor
+    features_rest: torch.Tensor
+    vertex_weight: torch.Tensor
+    sigma: float
+    instance_feature: Optional[torch.Tensor]
 
-    To reconstruct view-dependent color in a shader:
-      1. Compute the view direction d = normalize(vertex_pos - camera_pos)
-      2. Evaluate SH basis functions Y_l^m(d) up to degree 3
-      3. color_c = clamp(sum_i(coeff_c_i * Y_i(d)) + 0.5, 0, 1) for c in {R,G,B}
-    """
+    @property
+    def vertex_count(self) -> int:
+        return int(self.vertices.shape[0])
+
+    @property
+    def face_count(self) -> int:
+        return int(self.triangle_indices.shape[0])
+
+    def select_faces(self, mask: Optional[torch.Tensor] = None) -> "MeshCheckpoint":
+        if mask is None:
+            return self
+
+        face_mask = torch.as_tensor(mask, dtype=torch.bool)
+        if face_mask.numel() != self.face_count:
+            raise ValueError(
+                f"Expected a face mask with {self.face_count} entries, got {face_mask.numel()}."
+            )
+
+        selected_face_ids = torch.nonzero(face_mask, as_tuple=False).flatten()
+        selected_faces = self.triangle_indices[selected_face_ids].long()
+        referenced_vertices, inverse = torch.unique(
+            selected_faces.reshape(-1),
+            sorted=True,
+            return_inverse=True,
+        )
+        remapped_faces = inverse.reshape(selected_faces.shape[0], selected_faces.shape[1]).to(torch.int32)
+
+        selected_instance_feature = None
+        if self.instance_feature is not None:
+            if self.instance_feature.shape[0] == self.face_count:
+                selected_instance_feature = self.instance_feature[selected_face_ids]
+            elif self.instance_feature.shape[0] == self.vertex_count:
+                selected_instance_feature = self.instance_feature[referenced_vertices]
+            else:
+                raise ValueError(
+                    "instance_feature has an unsupported leading dimension. "
+                    f"Expected {self.face_count} faces or {self.vertex_count} vertices, "
+                    f"got {self.instance_feature.shape[0]}."
+                )
+
+        return MeshCheckpoint(
+            active_sh_degree=self.active_sh_degree,
+            vertices=self.vertices[referenced_vertices],
+            triangle_indices=remapped_faces,
+            features_dc=self.features_dc[referenced_vertices],
+            features_rest=self.features_rest[referenced_vertices],
+            vertex_weight=self.vertex_weight[referenced_vertices],
+            sigma=self.sigma,
+            instance_feature=selected_instance_feature,
+        )
+
+
+def _str2bool(value):
+    if value is None:
+        return True
+    if isinstance(value, bool):
+        return value
+
+    normalized = str(value).strip().lower()
+    if normalized in {"1", "true", "t", "yes", "y", "on"}:
+        return True
+    if normalized in {"0", "false", "f", "no", "n", "off"}:
+        return False
+    raise argparse.ArgumentTypeError(f"Expected a boolean value, got: {value!r}")
+
+
+def _normalize_output_name(output_name):
+    output_path = Path(output_name)
+    if output_path.suffix:
+        return output_name, output_name[: -len(output_path.suffix)]
+    return f"{output_name}.ply", output_name
+
+
+def _scene_root_for_export(input_path: Path) -> Path:
+    if "point_cloud" not in input_path.parts:
+        return input_path.parent
+    point_cloud_index = input_path.parts.index("point_cloud")
+    return Path(*input_path.parts[:point_cloud_index])
+
+
+def _build_next_export_dir(input_path) -> Path:
+    segment_root = _scene_root_for_export(Path(input_path)) / "segmented_instances"
+    segment_root.mkdir(parents=True, exist_ok=True)
+
+    existing_indices = []
+    for path in segment_root.iterdir():
+        if not path.is_dir():
+            continue
+        if not path.name.startswith("instance_ply_"):
+            continue
+        suffix = path.name[len("instance_ply_") :]
+        if suffix.isdigit():
+            existing_indices.append(int(suffix))
+
+    next_index = max(existing_indices, default=-1) + 1
+    export_dir = segment_root / f"instance_ply_{next_index}"
+    export_dir.mkdir(exist_ok=True)
+    return export_dir
+
+
+def _load_mesh_checkpoint(path) -> MeshCheckpoint:
+    state_dict = torch.load(path, map_location="cpu", weights_only=False)
+    
+    vertex_weight = state_dict["vertex_weight"].detach().cpu()
+    if vertex_weight.dim() > 1:
+        vertex_weight = vertex_weight.squeeze(-1)
+
+    features_dc = state_dict["features_dc"].detach().cpu()
+    features_rest = state_dict["features_rest"].detach().cpu()
+    num_sh_coeffs = int(features_dc.shape[1] + features_rest.shape[1])
+    max_sh_degree = int(np.sqrt(num_sh_coeffs) - 1)
+
+    sigma = state_dict["sigma"]
+    if isinstance(sigma, torch.Tensor):
+        sigma = float(sigma.detach().cpu().item())
+    else:
+        sigma = float(sigma)
+
+    return MeshCheckpoint(
+        active_sh_degree=int(state_dict.get("active_sh_degree", max_sh_degree)),
+        vertices=state_dict["triangles_points"].detach().cpu(),
+        triangle_indices=state_dict["_triangle_indices"].detach().cpu().to(torch.int32),
+        features_dc=features_dc,
+        features_rest=features_rest,
+        vertex_weight=vertex_weight,
+        sigma=sigma,
+        instance_feature=None
+        if state_dict.get("instance_feature") is None
+        else state_dict["instance_feature"].detach().cpu(),
+    )
+
+
+def _face_mask_from_indices(face_count, face_indices):
+    if face_indices is None:
+        return None
+
+    indices = torch.as_tensor(face_indices, dtype=torch.long).flatten()
+    valid = indices[(indices >= 0) & (indices < face_count)]
+    if valid.numel() == 0:
+        raise ValueError("No valid triangle indices were provided.")
+
+    mask = torch.zeros(face_count, dtype=torch.bool)
+    mask[valid] = True
+    return mask
+
+
+def _mesh_max_sh_degree(mesh: MeshCheckpoint) -> int:
+    return int(np.sqrt(mesh.features_dc.shape[1] + mesh.features_rest.shape[1]) - 1)
+
+
+def _flatten_feature_tensor(features: torch.Tensor) -> np.ndarray:
+    return (
+        features.transpose(1, 2)
+        .flatten(start_dim=1)
+        .contiguous()
+        .numpy()
+        .astype(np.float32, copy=False)
+    )
+
+
+def _mesh_rgb_colors(mesh: MeshCheckpoint) -> np.ndarray:
+    colors = SH_C0 * mesh.features_dc + 0.5
+    colors = torch.clamp(colors, 0.0, 1.0)
+    return (colors * 255.0).round().to(torch.uint8).numpy().squeeze(1)
+
+
+def save_ply_with_sh(
+    verts,
+    faces,
+    features_dc,
+    features_rest,
+    opacities,
+    sigma_value,
+    active_sh_degree,
+    max_sh_degree,
+    path,
+):
     num_verts = verts.shape[0]
     num_faces = faces.shape[0]
-    num_dc = features_dc.shape[1]      # 3
-    num_rest = features_rest.shape[1]   # 45
+    num_dc = features_dc.shape[1]
+    num_rest = features_rest.shape[1]
 
     print(f"{num_verts} vertices, {num_faces} faces")
-    print(f"SH: {num_dc} DC + {num_rest} rest = {num_dc + num_rest} coefficients "
-          f"(degree {max_sh_degree}, active {active_sh_degree})")
+    print(
+        f"SH: {num_dc} DC + {num_rest} rest = {num_dc + num_rest} coefficients "
+        f"(degree {max_sh_degree}, active {active_sh_degree})"
+    )
 
-    # ── vertex dtype ──
     vert_props = [("x", "f4"), ("y", "f4"), ("z", "f4")]
-    for i in range(num_dc):
-        vert_props.append((f"f_dc_{i}", "f4"))
-    for i in range(num_rest):
-        vert_props.append((f"f_rest_{i}", "f4"))
+    for index in range(num_dc):
+        vert_props.append((f"f_dc_{index}", "f4"))
+    for index in range(num_rest):
+        vert_props.append((f"f_rest_{index}", "f4"))
     vert_props.append(("opacity", "f4"))
     vert_props.append(("sigma", "f4"))
 
     vert_data = np.empty(num_verts, dtype=vert_props)
-
-    # positions
     vert_data["x"] = verts[:, 0]
     vert_data["y"] = verts[:, 1]
     vert_data["z"] = verts[:, 2]
 
-    # DC SH coefficients
-    for i in range(num_dc):
-        vert_data[f"f_dc_{i}"] = features_dc[:, i]
+    for index in range(num_dc):
+        vert_data[f"f_dc_{index}"] = features_dc[:, index]
+    for index in range(num_rest):
+        vert_data[f"f_rest_{index}"] = features_rest[:, index]
 
-    # higher-order SH coefficients
-    for i in range(num_rest):
-        vert_data[f"f_rest_{i}"] = features_rest[:, i]
-
-    # opacity (logit space) and sigma
     vert_data["opacity"] = opacities
     vert_data["sigma"] = np.full(num_verts, sigma_value, dtype=np.float32)
 
-    # ── face dtype ──
-    print(f"Faces: {faces}")
-    face_dtype = [("vertex_indices", "i4", (3,))]
-    face_data = np.empty(num_faces, dtype=face_dtype)
+    face_data = np.empty(num_faces, dtype=[("vertex_indices", "i4", (3,))])
     face_data["vertex_indices"] = faces
 
-    # ── write PLY ──
-    vert_el = PlyElement.describe(vert_data, "vertex")
-    face_el = PlyElement.describe(face_data, "face")
-
-    ply = PlyData([vert_el, face_el], comments=[
-        "triangle_splatting",
-        f"active_sh_degree {active_sh_degree}",
-        f"max_sh_degree {max_sh_degree}",
-        "f_dc: DC SH coefficients (R, G, B)",
-        "f_rest: higher-order SH, layout [R0..R14, G0..G14, B0..B14]",
-        "opacity: logit space, apply sigmoid for [0,1]",
-    ], text=False)
+    ply = PlyData(
+        [
+            PlyElement.describe(vert_data, "vertex"),
+            PlyElement.describe(face_data, "face"),
+        ],
+        comments=[
+            "triangle_splatting",
+            f"active_sh_degree {active_sh_degree}",
+            f"max_sh_degree {max_sh_degree}",
+            "f_dc: DC SH coefficients (R, G, B)",
+            "f_rest: higher-order SH, layout [R0..R14, G0..G14, B0..B14]",
+            "opacity: logit space, apply sigmoid for [0,1]",
+        ],
+        text=False,
+    )
     ply.write(path)
-
     print(f"Saved {path}")
 
-def create_ply_rgb(path,output_name,instance_trgl=None):
-    # ── load checkpoint ──
-    sd = torch.load(path, map_location="cpu", weights_only=False)
 
-    # positions & connectivity
-    vertices = sd["triangles_points"]          # [V, 3]
-    triangle_indices = sd["_triangle_indices"]  # [T, 3]
-    if instance_trgl is not None:
+def _write_mesh_sh_ply(mesh: MeshCheckpoint, output_path):
+    save_ply_with_sh(
+        verts=mesh.vertices.numpy().astype(np.float32, copy=False),
+        faces=mesh.triangle_indices.numpy().astype(np.int32, copy=False),
+        features_dc=_flatten_feature_tensor(mesh.features_dc),
+        features_rest=_flatten_feature_tensor(mesh.features_rest),
+        opacities=mesh.vertex_weight.numpy().astype(np.float32, copy=False),
+        sigma_value=mesh.sigma,
+        active_sh_degree=mesh.active_sh_degree,
+        max_sh_degree=_mesh_max_sh_degree(mesh),
+        path=str(output_path),
+    )
 
-        corrected_instance_trgl = [idx for idx in instance_trgl if idx < triangle_indices.shape[0] and idx >= 0]
 
-        # weights is a list of triangle indices belonging to the target object
-        #sti = Subset of Triangle Indices
-        sti=triangle_indices[corrected_instance_trgl]
-        vertices_indices=set(idx.item() for t in sti for idx in t)
-        subset_vertices=[]
-        Dict_trans={}
-        for i in range(vertices.shape[0]):
-            if i in vertices_indices:
-                subset_vertices.append(i)
-                Dict_trans[i]=len(subset_vertices)-1
+def _write_mesh_rgb_ply(
+    mesh: MeshCheckpoint,
+    output_path,
+    face_property_name: Optional[str] = None,
+    face_property_value: Optional[int] = None,
+):
+    vertices = mesh.vertices.numpy().astype(np.float32, copy=False)
+    colors = _mesh_rgb_colors(mesh)
+    faces = mesh.triangle_indices.numpy().astype(np.int32, copy=False)
 
-        orig_idx = torch.tensor(subset_vertices, dtype=torch.long)
-        vertices = vertices[orig_idx]
+    vert_data = np.empty(
+        mesh.vertex_count,
+        dtype=[
+            ("x", "f4"),
+            ("y", "f4"),
+            ("z", "f4"),
+            ("red", "u1"),
+            ("green", "u1"),
+            ("blue", "u1"),
+        ],
+    )
+    vert_data["x"] = vertices[:, 0]
+    vert_data["y"] = vertices[:, 1]
+    vert_data["z"] = vertices[:, 2]
+    vert_data["red"] = colors[:, 0]
+    vert_data["green"] = colors[:, 1]
+    vert_data["blue"] = colors[:, 2]
 
-        # Remap triangle indices to the new (compact) vertex indices
-        new_triangles = [[Dict_trans[v.item()] for v in T] for T in sti]
-        triangle_indices = torch.tensor(new_triangles, dtype=torch.long)
+    if face_property_name is None:
+        face_data = np.empty(mesh.face_count, dtype=[("vertex_indices", "i4", (3,))])
+        face_data["vertex_indices"] = faces
     else:
-        orig_idx = None
+        face_data = np.empty(
+            mesh.face_count,
+            dtype=[("vertex_indices", "i4", (3,)), (face_property_name, "i4")],
+        )
+        face_data["vertex_indices"] = faces
+        face_data[face_property_name] = np.full(mesh.face_count, face_property_value, dtype=np.int32)
 
-    # ── spherical harmonics ──
-    f_dc   = sd["features_dc"]    # [V, 1, 3]
-    if orig_idx is not None:
-        f_dc = f_dc[orig_idx]
-    
-    
-    verts_np = vertices.detach().cpu().numpy()
-    faces_np = triangle_indices.detach().cpu().numpy()
-
-    # Compute colors (same as original 3D Gaussian Splatting training)
-    SH_C0 = 0.28209479177387814
-    colors = SH_C0 * f_dc + 0.5
-    colors = torch.clamp(colors, 0.0, 1.0)
-    colors_u8 = (colors * 255.0).round().to(torch.uint8).cpu().numpy()
-    colors_u8 = colors_u8.squeeze()  # Remove the middle dimension [V, 1, 3] -> [V, 3]
-
-    mesh = trimesh.Trimesh(vertices=verts_np.astype(np.float32),
-                           faces=faces_np.astype(np.int32),
-                           vertex_colors=colors_u8.astype(np.uint8),
-                           process=False)
-    
-    # Export as PLY
-    mesh.export(output_name, file_type='ply')
+    PlyData(
+        [
+            PlyElement.describe(vert_data, "vertex"),
+            PlyElement.describe(face_data, "face"),
+        ],
+        text=False,
+    ).write(str(output_path))
+    print(f"Saved {output_path}")
 
 
-def create_instance_ply_RGB(path,output_name):
-    sd = torch.load(path, map_location="cpu", weights_only=False)
+def _triangle_centroids(mesh: MeshCheckpoint) -> torch.Tensor:
+    return mesh.vertices[mesh.triangle_indices.long()].mean(dim=1)
 
-    vertices = sd["triangles_points"]
-    triangle_indices = sd["_triangle_indices"]
-    num_faces = triangle_indices.shape[0]
-    num_vertices = vertices.shape[0]
 
-    f_dc = sd["features_dc"]
-    SH_C0 = 0.28209479177387814
-    colors = SH_C0 * f_dc + 0.5
-    colors = torch.clamp(colors, 0.0, 1.0)
-    colors_u8 = (colors * 255.0).round().to(torch.uint8).cpu().numpy().squeeze(1)
+def _face_feature_tensor(mesh: MeshCheckpoint, require_instance_feature=False) -> torch.Tensor:
+    if mesh.instance_feature is None:
+        if require_instance_feature:
+            raise ValueError(
+                "The checkpoint does not contain instance_feature, so segmented export is unavailable."
+            )
+        return _triangle_centroids(mesh).float()
 
-    # Derive per-face instance ids from checkpoint instance features.
-    instance_data = sd.get("instance_feature", None)
-    if instance_data is not None:
-        instance_tensor = instance_data.detach().cpu()
-        faces_ids = torch.argmax(instance_tensor, dim=1).to(torch.int64)
+    instance_feature = mesh.instance_feature.detach().cpu().float()
+    if instance_feature.shape[0] == mesh.face_count:
+        return instance_feature
+    if instance_feature.shape[0] == mesh.vertex_count:
+        # Vertex-attached features are averaged onto each face so segmentation stays mesh-local.
+        return instance_feature[mesh.triangle_indices.long()].mean(dim=1)
+
+    raise ValueError(
+        "instance_feature has an unsupported leading dimension. "
+        f"Expected {mesh.face_count} faces or {mesh.vertex_count} vertices, "
+        f"got {instance_feature.shape[0]}."
+    )
+
+
+def _prepare_feature_tensor(features, normalize_features):
+    prepared = features.detach().cpu().float()
+    if normalize_features:
+        prepared = prepared / prepared.norm(dim=1, keepdim=True).clamp_min(1e-12)
+    return prepared
+
+
+def _sample_rows(values, max_rows):
+    if values.shape[0] <= max_rows:
+        return values
+    sample_idx = torch.linspace(0, values.shape[0] - 1, steps=max_rows).long()
+    return values[sample_idx]
+
+
+def _seed_centroids(sample_features, distance_threshold):
+    if sample_features.shape[0] == 0:
+        return sample_features.new_empty((0, sample_features.shape[1]))
+
+    centroids = [sample_features[0].clone()]
+    counts = [1]
+    for feature in sample_features[1:]:
+        centroid_tensor = torch.stack(centroids)
+        distances = torch.norm(centroid_tensor - feature.unsqueeze(0), dim=1)
+        best_index = int(torch.argmin(distances).item())
+        if distances[best_index].item() <= distance_threshold:
+            counts[best_index] += 1
+            centroids[best_index] = centroids[best_index] + (
+                feature - centroids[best_index]
+            ) / counts[best_index]
+        else:
+            centroids.append(feature.clone())
+            counts.append(1)
+    return torch.stack(centroids)
+
+
+def _batched_nearest_centroid(values, centroids, batch_size=DEFAULT_ASSIGN_BATCH_SIZE):
+    assignments = []
+    min_distances = []
+    for start in range(0, values.shape[0], batch_size):
+        stop = min(start + batch_size, values.shape[0])
+        batch = values[start:stop]
+        distances = torch.cdist(batch, centroids)
+        batch_min_distances, batch_assignments = distances.min(dim=1)
+        assignments.append(batch_assignments)
+        min_distances.append(batch_min_distances)
+    return torch.cat(assignments), torch.cat(min_distances)
+
+
+def _recompute_centroids(values, assignments):
+    num_clusters = int(assignments.max().item()) + 1
+    centroids = torch.zeros((num_clusters, values.shape[1]), dtype=values.dtype)
+    counts = torch.bincount(assignments, minlength=num_clusters)
+    centroids.index_add_(0, assignments, values)
+
+    nonzero = counts > 0
+    centroids[nonzero] = centroids[nonzero] / counts[nonzero].unsqueeze(1)
+    return centroids, counts
+
+
+def _compact_and_sort_clusters(values, assignments):
+    unique_ids, inverse = torch.unique(assignments, sorted=True, return_inverse=True)
+    centroids, counts = _recompute_centroids(values, inverse)
+    size_order = torch.argsort(counts, descending=True)
+
+    remapped = torch.empty_like(inverse)
+    for new_index, old_index in enumerate(size_order.tolist()):
+        remapped[inverse == old_index] = new_index
+
+    return remapped, centroids[size_order], counts[size_order], unique_ids[size_order]
+
+
+def _merge_small_clusters(values, assignments, centroids, counts, min_cluster_size):
+    if min_cluster_size <= 1 or counts.numel() <= 1:
+        return assignments, centroids, counts
+
+    large_cluster_mask = counts >= min_cluster_size
+    if large_cluster_mask.all() or not torch.any(large_cluster_mask):
+        return assignments, centroids, counts
+
+    large_cluster_ids = torch.where(large_cluster_mask)[0]
+    small_point_mask = ~large_cluster_mask[assignments]
+    if not torch.any(small_point_mask):
+        return assignments, centroids, counts
+
+    reassigned = assignments.clone()
+    new_targets, _ = _batched_nearest_centroid(values[small_point_mask], centroids[large_cluster_ids])
+    reassigned[small_point_mask] = large_cluster_ids[new_targets]
+
+    compacted, compact_centroids, compact_counts, _ = _compact_and_sort_clusters(values, reassigned)
+    return compacted, compact_centroids, compact_counts
+
+
+def _segment_instance_features(
+    instance_feature,
+    distance_threshold,
+    normalize_features=False,
+    min_cluster_size=1,
+    seed_sample_size=DEFAULT_SEED_SAMPLE_SIZE,
+    refine_iters=DEFAULT_CLUSTER_REFINE_ITERS,
+):
+    if distance_threshold <= 0:
+        raise ValueError("distance_threshold must be positive.")
+    if min_cluster_size <= 0:
+        raise ValueError("min_cluster_size must be positive.")
+
+    features = _prepare_feature_tensor(instance_feature, normalize_features)
+    seed_features = _sample_rows(features, seed_sample_size)
+    centroids = _seed_centroids(seed_features, distance_threshold)
+    if centroids.shape[0] == 0:
+        raise ValueError("Unable to initialize any feature centroids from instance_feature.")
+
+    for _ in range(refine_iters):
+        assignments, min_distances = _batched_nearest_centroid(features, centroids)
+        far_point_mask = min_distances > distance_threshold
+        if torch.any(far_point_mask):
+            extra_seed_features = _sample_rows(features[far_point_mask], seed_sample_size)
+            extra_centroids = _seed_centroids(extra_seed_features, distance_threshold)
+            if extra_centroids.shape[0] > 0:
+                _, extra_distances = _batched_nearest_centroid(extra_centroids, centroids)
+                keep_extra_mask = extra_distances > distance_threshold
+                if torch.any(keep_extra_mask):
+                    centroids = torch.cat((centroids, extra_centroids[keep_extra_mask]), dim=0)
+                    continue
+        centroids, _ = _recompute_centroids(features, assignments)
+
+    assignments, _ = _batched_nearest_centroid(features, centroids)
+    assignments, centroids, counts, _ = _compact_and_sort_clusters(features, assignments)
+    assignments, centroids, counts = _merge_small_clusters(
+        features,
+        assignments,
+        centroids,
+        counts,
+        min_cluster_size,
+    )
+    return assignments, counts
+
+
+def _run_kmeans(values, n_clusters, max_iters=10):
+    if n_clusters <= 0:
+        raise ValueError("n_clusters must be positive.")
+
+    features = values.detach().cpu().float()
+    if features.shape[0] <= n_clusters:
+        assignments = torch.arange(features.shape[0], dtype=torch.long)
+        counts = torch.ones(features.shape[0], dtype=torch.long)
+        return assignments, counts
+
+    centroids = _sample_rows(features, n_clusters).clone()
+    for _ in range(max_iters):
+        assignments, _ = _batched_nearest_centroid(features, centroids)
+        centroids, _ = _recompute_centroids(features, assignments)
+
+    assignments, _ = _batched_nearest_centroid(features, centroids)
+    assignments, _, counts, _ = _compact_and_sort_clusters(features, assignments)
+    return assignments, counts
+
+
+def _write_segmentation_summary(export_dir, stem, mode_name, counts, **metadata):
+    summary_path = Path(export_dir) / f"{stem}_{mode_name}_summary.txt"
+    with open(summary_path, "w", encoding="utf-8") as handle:
+        handle.write(f"mode={mode_name}\n")
+        for key, value in metadata.items():
+            handle.write(f"{key}={value}\n")
+        handle.write(f"segments={counts.numel()}\n")
+        for index, count in enumerate(counts.tolist()):
+            handle.write(f"{index}\t{count}\n")
+
+
+def _export_grouped_sh_plys(mesh: MeshCheckpoint, export_dir, stem, assignments, counts, label):
+    for group_index in range(counts.numel()):
+        face_mask = assignments == group_index
+        if not torch.any(face_mask):
+            continue
+        grouped_mesh = mesh.select_faces(face_mask)
+        output_path = Path(export_dir) / f"{stem}_{label}_{group_index}.ply"
+        _write_mesh_sh_ply(grouped_mesh, output_path)
+        print(
+            f"Saved {label} PLY: {output_path} "
+            f"(vertices {grouped_mesh.vertex_count}, faces {grouped_mesh.face_count})"
+        )
+
+
+def create_ply_rgb(path, output_name, instance_trgl=None):
+    mesh = _load_mesh_checkpoint(path)
+    selected_mesh = mesh.select_faces(_face_mask_from_indices(mesh.face_count, instance_trgl))
+    _write_mesh_rgb_ply(selected_mesh, output_name)
+
+
+def create_ply_sh(path, output_name, instance_trgl=None):
+    mesh = _load_mesh_checkpoint(path)
+    selected_mesh = mesh.select_faces(_face_mask_from_indices(mesh.face_count, instance_trgl))
+    _write_mesh_sh_ply(selected_mesh, output_name)
+
+
+def export_full_ply(path, output_name):
+    normalized_name, _ = _normalize_output_name(output_name)
+    create_ply_sh(path, normalized_name)
+
+
+def create_instance_ply_RGB(path, output_name):
+    mesh = _load_mesh_checkpoint(path)
+    if mesh.instance_feature is None:
+        face_ids = torch.zeros(mesh.face_count, dtype=torch.int64)
     else:
-        faces_ids = torch.zeros(triangle_indices.shape[0], dtype=torch.int64)
+        face_ids = torch.argmax(_face_feature_tensor(mesh, require_instance_feature=True), dim=1).to(torch.int64)
 
+    unique_instance_ids = torch.unique(face_ids).tolist()
+    positive_instance_ids = [int(instance_id) for instance_id in unique_instance_ids if int(instance_id) >= 0]
+    instance_ids_to_export = positive_instance_ids if positive_instance_ids else [int(i) for i in unique_instance_ids]
 
-    verts_np = vertices.detach().cpu().numpy().astype(np.float32)
-    faces_np = triangle_indices.detach().cpu().numpy().astype(np.int32)
-
-    vert_dtype = [
-        ("x", "f4"),
-        ("y", "f4"),
-        ("z", "f4"),
-        ("red", "u1"),
-        ("green", "u1"),
-        ("blue", "u1"),
-    ]
-    vert_data = np.empty(verts_np.shape[0], dtype=vert_dtype)
-    vert_data["x"] = verts_np[:, 0]
-    vert_data["y"] = verts_np[:, 1]
-    vert_data["z"] = verts_np[:, 2]
-    vert_data["red"] = colors_u8[:, 0]
-    vert_data["green"] = colors_u8[:, 1]
-    vert_data["blue"] = colors_u8[:, 2]
-
-    # Face schema:
-    # element face N
-    # property list uchar int vertex_indices
-    # property int mesh_id
-    # Save one PLY per instance id.
-    unique_instance_ids = torch.unique(faces_ids).tolist()
-    positive_instance_ids = [int(i) for i in unique_instance_ids if int(i) >= 0]
-    if len(positive_instance_ids) > 0:
-        instance_ids_to_export = positive_instance_ids
-    else:
-        instance_ids_to_export = [int(i) for i in unique_instance_ids]
-
-    base, ext = os.path.splitext(output_name)
-    if ext == "":
-        ext = ".ply"
-
-    scene_dir = path.split('/')
-    arg=scene_dir.index("point_cloud")
-    scene_dir = "/".join(scene_dir[:arg])
-    segment_dir="segmented_instances"
-    segment_dir=os.path.join(scene_dir,segment_dir)
-    os.makedirs(segment_dir, exist_ok=True)
-
-    files_list=os.listdir(segment_dir)
-    idxs=[int(file.split("_")[-1]) for file in files_list]
-    if len(idxs)==0:
-        new_idx=0
-    else:
-        new_idx=max(idxs)+1
-
-    export_dir =os.path.join(segment_dir, f"instance_ply_{new_idx}")
-    os.makedirs(export_dir, exist_ok=True)
+    normalized_name, stem = _normalize_output_name(output_name)
+    export_dir = _build_next_export_dir(path)
+    extension = Path(normalized_name).suffix
 
     exported = 0
     for instance_id in instance_ids_to_export:
-        mask = (faces_ids == instance_id)
-        if mask.sum().item() == 0:
+        face_mask = face_ids == instance_id
+        if not torch.any(face_mask):
             continue
 
-        selected_faces = triangle_indices[mask]
-        vertices_indices = set(idx.item() for t in selected_faces for idx in t)
-        subset_vertices = []
-        index_map = {}
-        for i in range(num_vertices):
-            if i in vertices_indices:
-                subset_vertices.append(i)
-                index_map[i] = len(subset_vertices) - 1
-
-        if len(subset_vertices) == 0:
-            continue
-
-        orig_idx = torch.tensor(subset_vertices, dtype=torch.long)
-        sub_verts_np = verts_np[orig_idx.numpy()]
-        sub_colors_u8 = colors_u8[orig_idx.numpy()]
-
-        remapped_faces = np.array(
-            [[index_map[v.item()] for v in tri] for tri in selected_faces],
-            dtype=np.int32,
+        instance_mesh = mesh.select_faces(face_mask)
+        output_path = Path(export_dir) / f"{stem}_instance_{instance_id}{extension}"
+        _write_mesh_rgb_ply(
+            instance_mesh,
+            output_path,
+            face_property_name="instance_id",
+            face_property_value=instance_id,
         )
-
-        sub_vert_data = np.empty(sub_verts_np.shape[0], dtype=vert_dtype)
-        sub_vert_data["x"] = sub_verts_np[:, 0]
-        sub_vert_data["y"] = sub_verts_np[:, 1]
-        sub_vert_data["z"] = sub_verts_np[:, 2]
-        sub_vert_data["red"] = sub_colors_u8[:, 0]
-        sub_vert_data["green"] = sub_colors_u8[:, 1]
-        sub_vert_data["blue"] = sub_colors_u8[:, 2]
-
-        face_dtype = [("vertex_indices", "i4", (3,)), ("instance_id", "i4")]
-        sub_face_data = np.empty(remapped_faces.shape[0], dtype=face_dtype)
-        sub_face_data["vertex_indices"] = remapped_faces
-        sub_face_data["instance_id"] = np.full(remapped_faces.shape[0], instance_id, dtype=np.int32)
-
-        instance_output = f"{base}_instance_{instance_id}{ext}"
-        ply = PlyData(
-            [
-                PlyElement.describe(sub_vert_data, "vertex"),
-                PlyElement.describe(sub_face_data, "face"),
-            ],
-            text=False,
-        )
-        output_name = os.path.join(export_dir, f"{instance_output}")
-        ply.write(output_name)
         print(
-            f"Saved instance mesh PLY: {instance_output} "
-            f"(instance {instance_id}, vertices {sub_verts_np.shape[0]}, faces {remapped_faces.shape[0]})"
+            f"Saved instance mesh PLY: {output_path.name} "
+            f"(instance {instance_id}, vertices {instance_mesh.vertex_count}, faces {instance_mesh.face_count})"
         )
         exported += 1
 
     if exported == 0:
         print("No instance meshes were exported.")
-    
 
 
-def create_ply_sh(path,output_name,instance_trgl=None):
-    # ── load checkpoint ──
-    sd = torch.load(path, map_location="cpu", weights_only=False)
-    print(f"Keys: {list(sd.keys())}")
+def export_instance_plys(
+    path,
+    output_name,
+    distance_threshold=0.35,
+    min_cluster_size=256,
+    normalize_features=False,
+):
+    mesh = _load_mesh_checkpoint(path)
+    face_features = _face_feature_tensor(mesh, require_instance_feature=True)
 
-    # positions & connectivity
-    vertices = sd["triangles_points"]          # [V, 3]
-    triangle_indices = sd["_triangle_indices"]  # [T, 3]
-    if instance_trgl is not None:
+    _, stem = _normalize_output_name(output_name)
+    export_dir = _build_next_export_dir(path)
+    assignments, counts = _segment_instance_features(
+        face_features,
+        distance_threshold=distance_threshold,
+        normalize_features=normalize_features,
+        min_cluster_size=min_cluster_size,
+    )
 
-        corrected_instance_trgl = [idx for idx in instance_trgl if idx < triangle_indices.shape[0] and idx >= 0]
+    _export_grouped_sh_plys(mesh, export_dir, stem, assignments, counts, "instance")
+    _write_segmentation_summary(
+        export_dir,
+        stem,
+        "instance",
+        counts,
+        distance_threshold=distance_threshold,
+        min_cluster_size=min_cluster_size,
+        normalize_features=normalize_features,
+    )
+    print(f"Exported {counts.numel()} segmented instance PLY files to {export_dir}")
 
-        print(len(instance_trgl))
-        print(len(corrected_instance_trgl))
-        print(f"Removed {len(instance_trgl) - len(corrected_instance_trgl)} invalid triangle indices.")
-        # weights is a list of triangle indices belonging to the target object
-        #sti = Subset of Triangle Indices
-        sti=triangle_indices[corrected_instance_trgl]
-        vertices_indices=set(idx.item() for t in sti for idx in t)
-        subset_vertices=[]
-        Dict_trans={}
-        for i in range(vertices.shape[0]):
-            if i in vertices_indices:
-                subset_vertices.append(i)
-                Dict_trans[i]=len(subset_vertices)-1
 
-        orig_idx = torch.tensor(subset_vertices, dtype=torch.long)
-        vertices = vertices[orig_idx]
+def export_clustered_plys(path, output_name, n_clusters=10):
+    mesh = _load_mesh_checkpoint(path)
+    cluster_values = _face_feature_tensor(mesh, require_instance_feature=False)
 
-        # Remap triangle indices to the new (compact) vertex indices
-        new_triangles = [[Dict_trans[v.item()] for v in T] for T in sti]
-        triangle_indices = torch.tensor(new_triangles, dtype=torch.long)
-    else:
-        orig_idx = None
-    print(f"Vertices: {vertices.shape}, Triangles: {triangle_indices.shape}")
+    _, stem = _normalize_output_name(output_name)
+    export_dir = _build_next_export_dir(path)
+    assignments, counts = _run_kmeans(cluster_values, n_clusters=n_clusters)
 
-    # ── spherical harmonics ──
-    features_dc   = sd["features_dc"]    # [V, 1, 3]
-    features_rest  = sd["features_rest"]  # [V, 15, 3]
-    if orig_idx is not None:
-        features_dc = features_dc[orig_idx]
-        features_rest = features_rest[orig_idx]
+    _export_grouped_sh_plys(mesh, export_dir, stem, assignments, counts, "cluster")
+    _write_segmentation_summary(export_dir, stem, "cluster", counts, n_clusters=n_clusters)
+    print(f"Exported {counts.numel()} clustered PLY files to {export_dir}")
 
-    num_sh_coeffs = features_dc.shape[1] + features_rest.shape[1]  # 16
-    max_sh_degree = int(np.sqrt(num_sh_coeffs) - 1)                # 3
-    active_sh_degree = int(sd.get("active_sh_degree", max_sh_degree))
 
-    print(f"features_dc:   {features_dc.shape}")
-    print(f"features_rest: {features_rest.shape}")
-    print(f"SH degree: active={active_sh_degree}, max={max_sh_degree}")
+def cluster_patches(path, output_name="mesh_sh.ply", n_clusters=10):
+    return export_clustered_plys(path, output_name, n_clusters=n_clusters)
 
-    # Flatten SH following the 3DGS convention:
-    #   transpose [V, C, 3] -> [V, 3, C]  then flatten -> [V, 3*C]
-    #   Gives layout: [R_coeff0..R_coeffN, G_coeff0..G_coeffN, B_coeff0..B_coeffN]
-    dc_flat = (features_dc.detach()
-               .transpose(1, 2).flatten(start_dim=1)
-               .contiguous().cpu().numpy())     # [V, 3]
-    rest_flat = (features_rest.detach()
-                 .transpose(1, 2).flatten(start_dim=1)
-                 .contiguous().cpu().numpy())    # [V, 45]
 
-    # ── opacity (logit space) ──
-    vertex_weight = sd["vertex_weight"]  # [V] or [V, 1]
-    if vertex_weight.dim() > 1:
-        vertex_weight = vertex_weight.squeeze(-1)
-    if orig_idx is not None:
-        vertex_weight = vertex_weight[orig_idx]
-    opacities = vertex_weight.detach().cpu().numpy()
+def create_full_ply_SH(path, output_name):
+    return export_full_ply(path, output_name)
 
-    # ── sigma (global scalar) ──
-    sigma_raw = sd["sigma"]
-    if isinstance(sigma_raw, torch.Tensor):
-        sigma_value = sigma_raw.item()
-    else:
-        sigma_value = float(sigma_raw)
-    print(f"Sigma (raw): {sigma_value}")
 
-    # ── export ──
-    save_ply_with_sh(
-        verts=vertices.detach().cpu().numpy().astype(np.float32),
-        faces=triangle_indices.detach().cpu().numpy().astype(np.int32),
-        features_dc=dc_flat.astype(np.float32),
-        features_rest=rest_flat.astype(np.float32),
-        opacities=opacities.astype(np.float32),
-        sigma_value=sigma_value,
-        active_sh_degree=active_sh_degree,
-        max_sh_degree=max_sh_degree,
-        path=output_name,
+def create_instance_ply_SH(
+    path,
+    output_name,
+    distance_threshold=0.35,
+    min_cluster_size=256,
+    normalize_features=False,
+):
+    return export_instance_plys(
+        path,
+        output_name,
+        distance_threshold=distance_threshold,
+        min_cluster_size=min_cluster_size,
+        normalize_features=normalize_features,
     )
 
 
-def main():
+def create_clustered_plys(path, output_name, n_clusters=10):
+    return export_clustered_plys(path, output_name, n_clusters=n_clusters)
+
+
+def _build_parser():
     parser = argparse.ArgumentParser(
-        description="Convert a triangle-splatting checkpoint to a PLY file with "
-                    "full spherical harmonics data for use in rendering engines."
+        description="Export PLY files from mesh-splatting checkpoints."
     )
     parser.add_argument(
         "--path",
         type=str,
         required=True,
-        help="Path to the input checkpoint file (e.g., point_cloud_state_dict.pt)",
+        help="Path to the mesh-splatting checkpoint file (e.g. point_cloud_state_dict.pt).",
     )
     parser.add_argument(
         "--output_name",
         type=str,
         default="mesh_sh.ply",
-        help="Name of the output PLY file (default: mesh_sh.ply)",
+        help="Name stem for the output PLY file(s).",
     )
     parser.add_argument(
         "--instance",
-        type=bool,
+        nargs="?",
+        const=True,
         default=False,
-        help="WIP",
+        type=_str2bool,
+        help=(
+            "If True, segment by instance_feature distance and export one SH PLY per segment. "
+            "Supports `--instance`, `--instance True`, `--instance False`."
+        ),
     )
-    args = parser.parse_args()
-    if args.instance == True:
-        create_instance_ply_RGB(args.path,args.output_name)
-    else:
+    parser.add_argument(
+        "--cluster",
+        action="store_true",
+        help="If set, cluster mesh faces and export one SH PLY per cluster.",
+    )
+    parser.add_argument(
+        "--n_clusters",
+        type=int,
+        default=10,
+        help="Number of clusters to produce when using --cluster.",
+    )
+    parser.add_argument(
+        "--distance_threshold",
+        type=float,
+        default=0.35,
+        help="Euclidean threshold used to group similar instance_feature vectors.",
+    )
+    parser.add_argument(
+        "--min_cluster_size",
+        type=int,
+        default=256,
+        help="Segments smaller than this are merged into the nearest larger segment.",
+    )
+    parser.add_argument(
+        "--normalize_features",
+        action="store_true",
+        help="L2-normalize instance_feature vectors before segmentation.",
+    )
+    parser.add_argument(
+        "--rgb",
+        action="store_true",
+        help="Export a single RGB-colored mesh PLY instead of the SH layout when not segmenting.",
+    )
+    return parser
+
+
+def main():
+    args = _build_parser().parse_args()
+
+    if args.cluster:
+        export_clustered_plys(args.path, args.output_name, n_clusters=args.n_clusters)
+    elif args.instance:
+        export_instance_plys(
+            args.path,
+            args.output_name,
+            distance_threshold=args.distance_threshold,
+            min_cluster_size=args.min_cluster_size,
+            normalize_features=args.normalize_features,
+        )
+    elif args.rgb:
         create_ply_rgb(args.path, args.output_name)
+    else:
+        export_full_ply(args.path, args.output_name)
 
 
 if __name__ == "__main__":

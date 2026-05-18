@@ -152,6 +152,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
         f.write(f'\nsp_th {sp_th} cycle interval {cycle_interval}, cycle_num {pcycle}\n')
         f.write(f'Prune {getattr(opt, "prune", False)} \n')
     viewpoints = scene.getTrainCameras().copy()
+    print(len(viewpoints))
 
     for iteration in range(first_iter, opt.iterations + 1):
         iter_start.record()
