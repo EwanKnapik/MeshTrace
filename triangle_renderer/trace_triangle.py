@@ -6,7 +6,7 @@ from scene.triangle_model import TriangleModel
 
 
 def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
-          alpha_w=False, scaling_modifier=1.0, override_color=None):
+          alpha_w=False, scaling_modifier=1.0, override_color=None)->torch.tensor:
     try:
         render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
     except RuntimeError as exc:
