@@ -2,23 +2,46 @@ import torch
 import math
 import torch.nn.functional as F
 from triangle_renderer import render
+from diff_triangle_rasterization import TriangleRasterizationSettings, TriangleRasterizer
 from scene.triangle_model import TriangleModel
 
 
-def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
-          alpha_w=False, scaling_modifier=1.0, override_color=None)->torch.tensor:
-    try:
-        render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
-    except RuntimeError as exc:
-        if "doesn't have storage" not in str(exc):
-            raise
-        num_triangles = pc.get_triangle_indices.shape[0]
-        max_mask_id = int(id_masks.max().item()) if id_masks.numel() > 0 else 0
-        num_mask_ids = max(max_mask_id + 1, 1)
-        view_name = getattr(viewpoint_camera, "image_name", "<unknown>")
-        print(f"Skipping view '{view_name}' because the triangle rasterizer returned an empty temporary buffer.")
-        return torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
+def _dominant_labels_from_samples(
+    triangle_ids: torch.Tensor,
+    mask_ids: torch.Tensor,
+    num_triangles: int,
+    device: torch.device,
+) -> torch.Tensor:
+    dominant_labels = torch.zeros((num_triangles,), device=device, dtype=torch.long)
+    if triangle_ids.numel() == 0:
+        return dominant_labels
 
+    mask_base = int(mask_ids.max().item()) + 1
+    pair_keys = triangle_ids.to(torch.int64) * mask_base + mask_ids.to(torch.int64)
+    unique_keys, counts = torch.unique(pair_keys, return_counts=True)
+
+    pair_triangle_ids = torch.div(unique_keys, mask_base, rounding_mode="floor")
+    pair_mask_ids = torch.remainder(unique_keys, mask_base).to(torch.int32)
+    counts = counts.to(torch.int32)
+
+    max_counts = torch.zeros((num_triangles,), device=device, dtype=torch.int32)
+    max_counts.scatter_reduce_(0, pair_triangle_ids, counts, reduce="amax", include_self=False)
+
+    winning_pairs = counts == max_counts[pair_triangle_ids]
+    winner_triangle_ids = pair_triangle_ids[winning_pairs]
+    winner_mask_ids = pair_mask_ids[winning_pairs]
+
+    best_masks = torch.full((num_triangles,), mask_base, device=device, dtype=torch.int32)
+    best_masks.scatter_reduce_(0, winner_triangle_ids, winner_mask_ids, reduce="amin", include_self=True)
+
+    has_label = best_masks != mask_base
+    dominant_labels[has_label] = best_masks[has_label].to(torch.long)
+    return dominant_labels
+
+
+def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
+          alpha_w=False, scaling_modifier=1.0, override_color=None):
+    render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
     rend_ids = render_pkg["rend_ids"][0].long()
     if id_masks.shape != rend_ids.shape:
         print(f"{'!' * 10} sam_mask not same shape as rend_ids {'!' * 10}")
@@ -29,7 +52,7 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
     flat_rend_ids = rend_ids[in_bounds].reshape(-1).long()
     flat_masks = id_masks[in_bounds].reshape(-1).long()
 
-    valid_mask_labels = flat_masks >= 0
+    valid_mask_labels = flat_masks > 0
     flat_rend_ids = flat_rend_ids[valid_mask_labels]
     flat_masks = flat_masks[valid_mask_labels]
 
@@ -37,13 +60,44 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
     num_mask_ids = max(max_mask_id + 1, 1)
 
     weights = torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
+    totals = torch.zeros((num_triangles,), device=id_masks.device, dtype=torch.long)
+
     if flat_rend_ids.numel() > 0:
         linear_idx = flat_rend_ids * num_mask_ids + flat_masks
         counts = torch.bincount(linear_idx, minlength=num_triangles * num_mask_ids).float()
         counts = counts.view(num_triangles, num_mask_ids)
+        totals = counts.sum(dim=1).long()
         denom = counts.sum(dim=1, keepdim=True).clamp(min=1.0)
         weights = counts / denom
     return weights
+
+
+def trace_dominant_labels(
+    viewpoint_camera,
+    pc: TriangleModel,
+    id_masks: torch.Tensor,
+    pipe,
+    bg_color: torch.Tensor,
+    alpha_w: bool = False,
+    scaling_modifier: float = 1.0,
+    override_color=None,
+) -> torch.Tensor:
+    render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
+    rend_ids = render_pkg["rend_ids"][0].long()
+    if id_masks.shape != rend_ids.shape:
+        print(f"{'!' * 10} sam_mask not same shape as rend_ids {'!' * 10}")
+
+    num_triangles = pc.get_triangle_indices.shape[0]
+    valid_pixels = (rend_ids >= 0) & (rend_ids < num_triangles) & (id_masks > 0)
+    flat_rend_ids = rend_ids[valid_pixels].reshape(-1).long()
+    flat_masks = id_masks[valid_pixels].reshape(-1).long()
+
+    return _dominant_labels_from_samples(
+        triangle_ids=flat_rend_ids,
+        mask_ids=flat_masks,
+        num_triangles=num_triangles,
+        device=rend_ids.device,
+    )
 
 
 

@@ -32,6 +32,35 @@ import math
 import rdel
 
 
+def resolve_point_cloud_state_path(path: str) -> str:
+    if os.path.isfile(path):
+        return path
+
+    directory = path
+    if os.path.basename(path) == "point_cloud_state_dict.pt":
+        directory = os.path.dirname(path)
+
+    canonical_path = os.path.join(directory, "point_cloud_state_dict.pt")
+    if os.path.isfile(canonical_path):
+        return canonical_path
+
+    prefix = "point_cloud_state_dict_"
+    suffix = ".pt"
+    indexed_candidates = []
+    if os.path.isdir(directory):
+        for entry in os.listdir(directory):
+            if not (entry.startswith(prefix) and entry.endswith(suffix)):
+                continue
+            index_str = entry[len(prefix):-len(suffix)]
+            if index_str.isdigit():
+                indexed_candidates.append((int(index_str), os.path.join(directory, entry)))
+
+    if indexed_candidates:
+        indexed_candidates.sort(key=lambda item: item[0])
+        return indexed_candidates[-1][1]
+
+    raise FileNotFoundError(f"Could not find a checkpoint file under '{path}'.")
+
 
 def random_rotation_matrices(num_matrices, device='cpu'):
     """
@@ -172,19 +201,6 @@ class TriangleModel:
 
         mkdir_p(path)
 
-        files_list=os.listdir(path)
-        idxs=[]
-        for file in files_list:
-            idxs.append(int(file.split("_")[-1].split(".")[0]) if file.split("_")[-1].split(".")[0].isnumeric() else 0)
-
-        idxs=[int(file.split("_")[-1]) if file.split("_")[-1].isnumeric() else 0 for file in files_list]
-        print(idxs)
-        if len(idxs)==0:
-            new_idx=0
-        else:
-            new_idx=max(idxs)+1
-        print(f'new index {new_idx}')
-
         point_cloud_state_dict = {}
 
         point_cloud_state_dict["triangles_points"] = self.vertices
@@ -198,11 +214,21 @@ class TriangleModel:
         point_cloud_state_dict["importance_score"] = self.importance_score
         point_cloud_state_dict["image_size"] = self.image_size
         point_cloud_state_dict["pixel_count"] = self.pixel_count
-        point_cloud_state_dict["opt_dict"] = self.optimizer.state_dict()
+        point_cloud_state_dict["opt_dict"] = self.optimizer.state_dict() if self.optimizer is not None else None
 
-        #new_idx=1
-        torch.save(point_cloud_state_dict, os.path.join(path, f'point_cloud_state_dict_{new_idx}.pt'))
-        #torch.save(point_cloud_state_dict, os.path.join(path, 'point_cloud_state_dict.pt'))
+        torch.save(point_cloud_state_dict, os.path.join(path, "point_cloud_state_dict.pt"))
+
+        files_list = os.listdir(path)
+        idxs = []
+        for file in files_list:
+            if not (file.startswith("point_cloud_state_dict_") and file.endswith(".pt")):
+                continue
+            index_str = file[len("point_cloud_state_dict_"):-3]
+            if index_str.isdigit():
+                idxs.append(int(index_str))
+
+        new_idx = 0 if len(idxs) == 0 else max(idxs) + 1
+        torch.save(point_cloud_state_dict, os.path.join(path, f"point_cloud_state_dict_{new_idx}.pt"))
 
 
     def load_ply_file(self, path, device="cuda", active_sh_degree=3, assume_yup_to_zup=False, training_args=None):
@@ -308,7 +334,8 @@ class TriangleModel:
 
     def load_parameters(self, path, device="cuda", segment=False, ratio_threshold = 0.75):
         # 1. Load the dict you saved
-        state = torch.load(os.path.join(path, "point_cloud_state_dict.pt"),weights_only=False, map_location=device)
+        state_path = resolve_point_cloud_state_path(path)
+        state = torch.load(state_path, weights_only=False, map_location=device)
 
         # 2. Restore everything you put in there (one line each)
         self.vertices            = state["triangles_points"].to(device).to(torch.float32).detach().clone().requires_grad_(True)
@@ -344,6 +371,8 @@ class TriangleModel:
 
             with torch.no_grad():
                 self._triangle_indices = self._triangle_indices[keep_mask]
+                if self._instance_feature is not None:
+                    self._instance_feature = self._instance_feature[keep_mask].detach().clone().requires_grad_(True)
 
         ################################################################
 
@@ -550,13 +579,11 @@ class TriangleModel:
       
   
     def training_setup(self, training_args):
-        print(training_args.include_feature)
-
         if training_args.include_feature:
-            triangle_count = self._triangle_indices.shape[0]
+            vertices_count=self.vertices.shape[0]
             if self._instance_feature is None or self._instance_feature.shape[0] != triangle_count:
  
-                instance_feature = torch.randn((triangle_count, training_args.instance_feature_nbr), device="cuda")
+                instance_feature = torch.randn((vertices_count, training_args.instance_feature_nbr), device="cuda")
                 # instance_feature = 1e-3 * torch.normal(mean=0.0, std=1.0, size=(self._xyz.shape[0], 16)).float().cuda()
                 self._instance_feature = nn.Parameter(instance_feature.requires_grad_(True))
             elif not isinstance(self._instance_feature, nn.Parameter):
@@ -603,6 +630,34 @@ class TriangleModel:
                         lr = self.triangle_scheduler_args(iteration)
                     param_group['lr'] = lr
                     return lr
+
+    def _slice_triangle_instance_feature(self, mask: torch.Tensor):
+        if self._instance_feature is None:
+            return
+
+        for group in self.optimizer.param_groups if self.optimizer is not None else []:
+            if group["name"] != "instance_feature":
+                continue
+
+            stored_state = self.optimizer.state.get(group['params'][0], None)
+            if stored_state is not None:
+                stored_state["exp_avg"] = stored_state["exp_avg"][mask]
+                stored_state["exp_avg_sq"] = stored_state["exp_avg_sq"][mask]
+
+                del self.optimizer.state[group['params'][0]]
+                group['params'][0] = nn.Parameter(group['params'][0][mask].requires_grad_(True))
+                self.optimizer.state[group['params'][0]] = stored_state
+            else:
+                group['params'][0] = nn.Parameter(group['params'][0][mask].requires_grad_(True))
+
+            self._instance_feature = group['params'][0]
+            return
+
+        sliced = self._instance_feature[mask]
+        if isinstance(self._instance_feature, nn.Parameter):
+            self._instance_feature = nn.Parameter(sliced.requires_grad_(True))
+        else:
+            self._instance_feature = sliced.detach().clone().requires_grad_(True)
 
     def _prune_optimizer(self, mask):
         optimizable_tensors = {}
@@ -669,6 +724,12 @@ class TriangleModel:
         self._features_rest = optimizable_tensors["f_rest"]
         if "instance_feature" in optimizable_tensors:
             self._instance_feature = optimizable_tensors["instance_feature"]
+        elif new_instance_feature is not None and self._instance_feature is not None:
+            appended_feature = torch.cat((self._instance_feature, new_instance_feature), dim=0)
+            if isinstance(self._instance_feature, nn.Parameter):
+                self._instance_feature = nn.Parameter(appended_feature.detach().clone().requires_grad_(True))
+            else:
+                self._instance_feature = appended_feature.detach().clone().requires_grad_(True)
         
         # Update triangle indices
         self._triangle_indices = torch.cat([
@@ -748,7 +809,7 @@ class TriangleModel:
         new_vertex_weight = self.inverse_opacity_activation(avg_opacity)
         new_instance_feature = None
         if self._instance_feature is not None:
-            new_instance_feature = (self._instance_feature[u] + self._instance_feature[v]) / 2.0
+            new_instance_feature = self._instance_feature[selected_indices].repeat_interleave(4, dim=0)
 
         new_triangles = subdivided_triangles
         
@@ -765,7 +826,7 @@ class TriangleModel:
     def _prune_vertex_optimizer(self, mask):
         optimizable_tensors = {}
         for group in self.optimizer.param_groups:
-            if group["name"] in ["vertices", "vertex_weight", "f_dc", "f_rest", "instance_feature"]:
+            if group["name"] in ["vertices", "vertex_weight", "f_dc", "f_rest"]:
                 stored_state = self.optimizer.state.get(group['params'][0], None)
                 if stored_state is not None:
                     # Prune optimizer state
@@ -793,8 +854,6 @@ class TriangleModel:
                 self._features_dc = tensor
             elif name == "f_rest":
                 self._features_rest = tensor
-            elif name == "instance_feature":
-                self._instance_feature = tensor
 
 
     def _prune_vertices(self, vertex_mask: torch.Tensor):
@@ -812,6 +871,7 @@ class TriangleModel:
             valid_tris = (remapped >= 0).all(dim=1)
             remapped = remapped[valid_tris]
             self._triangle_indices = remapped.to(torch.int32).contiguous()
+            self._slice_triangle_instance_feature(valid_tris)
 
             if isinstance(self.image_size, torch.Tensor) and self.image_size.numel() > 0:
                 self.image_size = self.image_size[valid_tris]
@@ -848,6 +908,7 @@ class TriangleModel:
                     self._triangle_indices = new_id2[self._triangle_indices.long()].to(torch.int32).contiguous()
 
     def prune_triangles(self, mask):
+        self._slice_triangle_instance_feature(mask)
         self._triangle_indices = self._triangle_indices[mask]
         self._triangle_indices = self._triangle_indices.to(torch.int32)
         self.image_size = self.image_size[mask]

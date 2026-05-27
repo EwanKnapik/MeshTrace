@@ -13,12 +13,11 @@ from scene.cameras import Camera
 import numpy as np
 from utils.general_utils import PILtoTorch
 from utils.graphics_utils import fov2focal
+from utils.depth_utils import load_depth_image
 import torch
-import cv2
 
 WARNED = False
 
-import numpy as np, torch
 from pathlib import Path
 
 def to_depth_tensor(depth_in):
@@ -55,7 +54,9 @@ def loadCam(args, id, cam_info, resolution_scale):
 
     if cam_info.depth_path != "":
         try:
-            invdepthmap = cv2.imread(cam_info.depth_path, -1).astype(np.float32) / float(2**16)
+            invdepthmap = load_depth_image(cam_info.depth_path)
+            if invdepthmap is None:
+                raise FileNotFoundError(cam_info.depth_path)
 
         except FileNotFoundError:
             print(f"Error: The depth file at path '{cam_info.depth_path}' was not found.")
