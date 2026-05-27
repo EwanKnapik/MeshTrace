@@ -8,7 +8,7 @@ import os
 
 from utils.con_mask_utils import SegmentationMask
 from utils.render_utils import save_img_u8
-from triangle_renderer.trace_triangle import trace, trace_masks
+from triangle_renderer.trace_triangle import trace, trace_dominant_labels, trace_masks
 from triangle_renderer import TriangleModel
 from scene import Scene
 from conf.con_masks_conf import *
@@ -93,7 +93,13 @@ def _patch_list_from_storage(patches) -> List[torch.Tensor]:
     raise TypeError(f"unsupported patch storage type: {type(patches)!r}")
 
 
-def _merge_patches(patches: List[torch.Tensor], labels: torch.Tensor, thresh: float = 0.1) -> List[torch.Tensor]:
+def _merge_patches(
+    patches: List[torch.Tensor],
+    labels: torch.Tensor,
+    iou_thresh: float = 0.3,
+    patch_coverage_thresh: float = 0.5,
+    group_coverage_thresh: float = 0.5,
+) -> List[torch.Tensor]:
     labels = labels.to(device="cpu", dtype=torch.long)
     current_groups = _labels_to_patch_index_list(labels)
     if len(current_groups) == 0:
@@ -101,14 +107,21 @@ def _merge_patches(patches: List[torch.Tensor], labels: torch.Tensor, thresh: fl
     if len(patches) == 0:
         return current_groups
 
+    # list of labels available in current view, should be of size (nb_labels)
     group_labels = torch.tensor(
         [int(labels[group[0]].item()) for group in current_groups],
         dtype=torch.long,
     )
+
+
+    # number of Ts in each patch of current view
     group_sizes = torch.tensor([group.numel() for group in current_groups], dtype=torch.long)
+    # dict with label id as key from sam mask, and idx as value
+    # label id can have gaps between them, but idx are 0,1,2,...
+    # useful for idx in list to not have gaps
     group_index_by_label = {int(label.item()): idx for idx, label in enumerate(group_labels)}
-    patch_to_groups: List[List[int]] = [[] for _ in patches]
-    group_to_patches: List[List[int]] = [[] for _ in current_groups]
+    patch_candidate_groups: List[List[int]] = [[] for _ in patches]
+    group_candidate_patches: List[List[int]] = [[] for _ in current_groups]
 
     for patch_idx, patch in enumerate(patches):
         patch_labels = labels[patch.to(dtype=torch.long)]
@@ -123,52 +136,65 @@ def _merge_patches(patches: List[torch.Tensor], labels: torch.Tensor, thresh: fl
             if group_idx is None:
                 continue
 
-            union = visible_patch_size + int(group_sizes[group_idx].item()) - intersection
-            if union > 0 and intersection >= thresh * union:
-                patch_to_groups[patch_idx].append(group_idx)
-                group_to_patches[group_idx].append(patch_idx)
-
-    merged_patches: List[torch.Tensor] = []
-    visited_patches = [False] * len(patches)
-    visited_groups = [False] * len(current_groups)
-
-    for patch_idx in range(len(patches)):
-        if visited_patches[patch_idx]:
-            continue
-
-        patch_stack = [patch_idx]
-        component_sets: List[torch.Tensor] = []
-
-        while patch_stack:
-            current_patch_idx = patch_stack.pop()
-            if visited_patches[current_patch_idx]:
+            group_size = int(group_sizes[group_idx].item())
+            union = visible_patch_size + group_size - intersection
+            if union <= 0:
                 continue
 
-            visited_patches[current_patch_idx] = True
-            component_sets.append(patches[current_patch_idx].to(dtype=torch.long))
+            iou = intersection / union
+            patch_coverage = intersection / visible_patch_size
+            group_coverage = intersection / group_size
+            if (
+                iou >= iou_thresh
+                and patch_coverage >= patch_coverage_thresh
+                and group_coverage >= group_coverage_thresh
+            ):
+                patch_candidate_groups[patch_idx].append(group_idx)
+                group_candidate_patches[group_idx].append(patch_idx)
 
-            for group_idx in patch_to_groups[current_patch_idx]:
-                if visited_groups[group_idx]:
-                    continue
+    matched_patch_to_group = {}
+    matched_groups = set()
+    for patch_idx, candidate_groups in enumerate(patch_candidate_groups):
+        if len(candidate_groups) != 1:
+            continue
 
-                visited_groups[group_idx] = True
-                component_sets.append(current_groups[group_idx].to(dtype=torch.long))
-                for linked_patch_idx in group_to_patches[group_idx]:
-                    if not visited_patches[linked_patch_idx]:
-                        patch_stack.append(linked_patch_idx)
+        group_idx = candidate_groups[0]
+        if len(group_candidate_patches[group_idx]) != 1:
+            continue
 
-        merged_patch = torch.unique(torch.cat(component_sets), sorted=True)
+        matched_patch_to_group[patch_idx] = group_idx
+        matched_groups.add(group_idx)
+
+    merged_patches: List[torch.Tensor] = []
+    for patch_idx, patch in enumerate(patches):
+        group_idx = matched_patch_to_group.get(patch_idx)
+        if group_idx is None:
+            merged_patches.append(patch)
+            continue
+
+        merged_patch = torch.unique(
+            torch.cat([patch.to(dtype=torch.long), current_groups[group_idx].to(dtype=torch.long)]),
+            sorted=True,
+        )
         merged_patches.append(merged_patch.to(dtype=torch.int32).contiguous())
 
     merged_patches.extend(
         current_groups[group_idx]
-        for group_idx, is_visited in enumerate(visited_groups)
-        if not is_visited
+        for group_idx in range(len(current_groups))
+        if len(group_candidate_patches[group_idx]) == 0 and group_idx not in matched_groups
     )
     return merged_patches
 
 
-def compute_coherent_W(scene: Scene,triangles,pipe,background, merge_iou_thresh: float = 0.1):
+def compute_coherent_W(
+    scene: Scene,
+    triangles,
+    pipe,
+    background,
+    merge_iou_thresh: float = 0.3,
+    patch_coverage_thresh: float = 0.5,
+    group_coverage_thresh: float = 0.5,
+):
     camera_stack = scene.getTrainCameras()
     device = background.device
     patches = None
@@ -177,15 +203,28 @@ def compute_coherent_W(scene: Scene,triangles,pipe,background, merge_iou_thresh:
         with tqdm(camera_stack) as pbar:
             for cam in pbar:
                 sam_mask = torch.as_tensor(cam.sam_mask, device=device, dtype=torch.long)
-                labels = trace(cam, triangles, sam_mask, pipe, background).argmax(dim=1).cpu()
+                labels = trace_dominant_labels(cam, triangles, sam_mask, pipe, background).cpu()
 
                 if patches is None:
                     patches = _labels_to_patch_index_list(labels)
                 else:
-                    patches = _merge_patches(patches, labels, thresh=merge_iou_thresh)
+                    patches = _merge_patches(
+                        patches,
+                        labels,
+                        iou_thresh=merge_iou_thresh,
+                        patch_coverage_thresh=patch_coverage_thresh,
+                        group_coverage_thresh=group_coverage_thresh,
+                    )
 
                 patch_count = 0 if patches is None else len(patches)
-                pbar.set_postfix({"Patches": f"{patch_count}", "IoU": f"{merge_iou_thresh:.2f}"})
+                pbar.set_postfix(
+                    {
+                        "Patches": f"{patch_count}",
+                        "IoU": f"{merge_iou_thresh:.2f}",
+                        "PatchCov": f"{patch_coverage_thresh:.2f}",
+                        "GroupCov": f"{group_coverage_thresh:.2f}",
+                    }
+                )
 
     if patches is None:
         return []
@@ -215,14 +254,17 @@ def main():
 
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--load_iters", type=str)
-    parser.add_argument("--merge_iou_thresh", default=0.1, type=float)
+    parser.add_argument("--merge_iou_thresh", default=0.3, type=float)
+    parser.add_argument("--patch_coverage_thresh", default=0.5, type=float)
+    parser.add_argument("--group_coverage_thresh", default=0.5, type=float)
+    parser.add_argument("--force_recompute_patches", action="store_true")
     args = get_combined_args(parser)
 
     dataset, pipe = model.extract(args), pipeline.extract(args)
 
 
     trngl_patches=try_load_precomputed_patches(dataset.model_path, args.load_iters)
-    if trngl_patches != None:
+    if args.force_recompute_patches or trngl_patches is None:
         bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
         background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
         triangles = TriangleModel(dataset.sh_degree)
@@ -238,6 +280,8 @@ def main():
             pipe,
             background,
             merge_iou_thresh=args.merge_iou_thresh,
+            patch_coverage_thresh=args.patch_coverage_thresh,
+            group_coverage_thresh=args.group_coverage_thresh,
         )
         torch.save(
             trngl_patches,

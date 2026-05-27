@@ -74,6 +74,27 @@ def glob_data(data_dir):
     data_paths = sorted(data_paths)
     return data_paths
 
+
+def load_depth_params(depth_params_file):
+    if not os.path.exists(depth_params_file):
+        return None
+
+    try:
+        with open(depth_params_file, "r") as f:
+            depths_params = json.load(f)
+
+        all_scales = np.array([depths_params[key]["scale"] for key in depths_params], dtype=np.float32)
+        valid_scales = all_scales[all_scales > 0]
+        med_scale = float(np.median(valid_scales)) if valid_scales.size > 0 else 0.0
+
+        for key in depths_params:
+            depths_params[key]["med_scale"] = med_scale
+
+        return depths_params
+    except Exception as e:
+        print(f"An unexpected error occurred when trying to open depth_params.json file: {e}")
+        sys.exit(1)
+
 def getNerfppNorm(cam_info):
     def get_center_and_diag(cam_centers):
         cam_centers = np.hstack(cam_centers)
@@ -249,29 +270,11 @@ def readColmapSceneInfo(path, images, eval,sam_folder, llffhold=8, aug=False):
 
     # Load depth scale and offset information
     depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
-    depths_params = None
-    if os.path.exists(depth_params_file):
-        try:
-            with open(depth_params_file, "r") as f:
-                depths_params = json.load(f)
-            all_scales = np.array([depths_params[key]["scale"] for key in depths_params])
-            if (all_scales > 0).sum():
-                med_scale = np.median(all_scales[all_scales > 0])
-            else:
-                med_scale = 0
-            for key in depths_params:
-                depths_params[key]["med_scale"] = med_scale
-
-        except FileNotFoundError:
-            print(f"Error: depth_params.json file not found at path '{depth_params_file}'.")
-            sys.exit(1)
-        except Exception as e:
-            print(f"An unexpected error occurred when trying to open depth_params.json file: {e}")
-            sys.exit(1)
+    depths_params = load_depth_params(depth_params_file)
     depths_folder = os.path.join(path, "depth")
 
     reading_dir = "images" if images == None else images
-    cam_infos_unsorted = cam_infos_unsorted = readColmapCameras(
+    cam_infos_unsorted = readColmapCameras(
         cam_extrinsics=cam_extrinsics,
         cam_intrinsics=cam_intrinsics,
         depths_params=depths_params,
@@ -324,10 +327,11 @@ def readCamerasFromTransforms(path, images, transformsfile, white_background, sa
     reading_dir = "images" if images == None else images
     images_folder=os.path.join(path, reading_dir)
     dataset="/".join(images_folder.split("/")[:-1])
-    if sam_folder in ['overlap','split','origin_overlap','pre_union','sam_origin_cover']:
+    if sam_folder in ['overlap','split','origin_overlap','pre_union','sam_origin_cover','split_ms']:
         print(f"Reading SAM masks from folder: {sam_folder}")
         print(f"Looking for SAM masks in: {dataset}/sam/{sam_folder}/*.npy")
-        sam_paths = glob_data(os.path.join(dataset ,image_set , "sam" ,os.path.join(sam_folder) ,"*.npy"))
+        #sam_paths = glob_data(os.path.join(dataset ,image_set , "sam" ,os.path.join(sam_folder) ,"*.npy"))
+        sam_paths = glob_data(os.path.join(dataset , "sam" ,os.path.join(sam_folder) ,"*.npy"))
     else:
         sam_paths=None
     sam_i=0

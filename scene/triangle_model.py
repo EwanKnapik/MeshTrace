@@ -228,7 +228,7 @@ class TriangleModel:
                 idxs.append(int(index_str))
 
         new_idx = 0 if len(idxs) == 0 else max(idxs) + 1
-        torch.save(point_cloud_state_dict, os.path.join(path, f"point_cloud_state_dict_{new_idx}.pt"))
+        #torch.save(point_cloud_state_dict, os.path.join(path, f"point_cloud_state_dict_{new_idx}.pt"))
 
 
     def load_ply_file(self, path, device="cuda", active_sh_degree=3, assume_yup_to_zup=False, training_args=None):
@@ -581,13 +581,11 @@ class TriangleModel:
     def training_setup(self, training_args):
         if training_args.include_feature:
             vertices_count=self.vertices.shape[0]
-            if self._instance_feature is None or self._instance_feature.shape[0] != triangle_count:
+            if self._instance_feature is None or self._instance_feature.shape[0] != vertices_count:
  
                 instance_feature = torch.randn((vertices_count, training_args.instance_feature_nbr), device="cuda")
                 # instance_feature = 1e-3 * torch.normal(mean=0.0, std=1.0, size=(self._xyz.shape[0], 16)).float().cuda()
                 self._instance_feature = nn.Parameter(instance_feature.requires_grad_(True))
-            elif not isinstance(self._instance_feature, nn.Parameter):
-                self._instance_feature = nn.Parameter(self._instance_feature.detach().clone().requires_grad_(True))
 
             l = [
                 {'params': [self._instance_feature],

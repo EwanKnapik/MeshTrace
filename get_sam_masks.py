@@ -59,7 +59,7 @@ def main():
 
     )#for llff
     for dir in os.listdir(args.file_path):
-        if dir in ["train","test","val","images"]:
+        if dir in ["train","test","val","images","rgb"]:
             
             save_folder = 'origin'
             SAM = 'sam'

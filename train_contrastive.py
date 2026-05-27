@@ -15,7 +15,7 @@ import sys
 
 from random import randint
 from utils.loss_utils import contrastive_loss
-from triangle_renderer.render_feature_new import render
+from triangle_renderer.render_feature import render
 from scene import Scene, TriangleModel
 from scene.triangle_model import resolve_point_cloud_state_path
 from utils.general_utils import safe_state
@@ -95,7 +95,7 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "Vertices": f"{triangles.get_vertices.shape[0]}",
-                    "Triangles": f"{triangles.get_triangle_indices.shape[0]}"
+                    "shape features": f"{triangles.get_instance_feature.shape}"
                 }
                 progress_bar.set_postfix(loss_dict)
                 progress_bar.update(10)

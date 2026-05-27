@@ -34,7 +34,7 @@ def main():
     image = pygame.transform.scale(image, (new_width, new_height))
     
     panel_width = 200
-    screen = pygame.display.set_mode((new_width + panel_width, new_height))
+    screen = pygame.display.set_mode((new_width + panel_width+100, new_height+100))
     pygame.display.set_caption("Image Annotator")
 
     # Colors and font

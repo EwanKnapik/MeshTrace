@@ -93,9 +93,12 @@ def create_bulk_ply_rgb(patches:torch.tensor,path:str,input_model:str,output_nam
     os.makedirs(export_dir, exist_ok=True)
 
     sd = torch.load(f"{model_dir}/point_cloud_state_dict.pt", map_location="cpu", weights_only=False)
+    print(len(patches))
     exported = 0
     for patch in tqdm(patches):
         if _patch_has_content(patch):
+            if len(patch)<100:
+                continue
             _export_ply_from_state(sd, f"{output_name}_{exported}.ply", export_dir, patch)
             exported+=1
     

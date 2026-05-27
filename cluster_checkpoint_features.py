@@ -12,15 +12,12 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 
-from create_full_ply import (
-    _face_feature_tensor,
-    _flatten_feature_tensor,
-    _load_mesh_checkpoint,
-    _prepare_feature_tensor,
-    _run_kmeans,
-    _triangle_centroids,
-)
+from create_full_ply_clustered import MeshCheckpoint, _load_mesh_checkpoint, _prepare_feature_tensor, _run_kmeans
 
+def _vertex_feature_tensor(mesh: MeshCheckpoint) -> torch.Tensor:
+    """Return the per-vertex instance_feature matrix from the checkpoint."""
+    instance_feature = mesh.instance_feature.detach().cpu().float()
+    return instance_feature
 
 DEFAULT_PLOT_POINT_LIMIT = 50000
 
@@ -49,22 +46,12 @@ def _resolve_checkpoint_path(path_str: str) -> Path:
     return matches[0]
 
 
-def _vertex_sh_features(mesh) -> torch.Tensor:
-    features_dc = torch.from_numpy(_flatten_feature_tensor(mesh.features_dc))
-    features_rest = torch.from_numpy(_flatten_feature_tensor(mesh.features_rest))
-    return torch.cat((features_dc, features_rest), dim=1).float()
 
 
 def _extract_features(mesh, feature_source: str) -> tuple[torch.Tensor, str]:
-    if feature_source == "sh_vertex":
-        return _vertex_sh_features(mesh), "vertex"
-    if feature_source == "sh_face":
-        vertex_features = _vertex_sh_features(mesh)
-        return vertex_features[mesh.triangle_indices.long()].mean(dim=1), "face"
+    """Select the feature matrix used for plotting and clustering."""
     if feature_source == "instance":
-        return _face_feature_tensor(mesh, require_instance_feature=True), "face"
-    if feature_source == "centroid":
-        return _triangle_centroids(mesh).float(), "face"
+        return _vertex_feature_tensor(mesh), "vertex"
     raise ValueError(f"Unsupported feature source: {feature_source}")
 
 
@@ -267,9 +254,9 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--feature-source",
         type=str,
-        default="sh_vertex",
-        choices=("sh_vertex", "sh_face", "instance", "centroid"),
-        help="'sh_vertex' matches create_full_ply's flattened SH feature layout.",
+        default="instance",
+        choices=("instance",),
+        help="Feature source to analyze.",
     )
     parser.add_argument(
         "--n-clusters",
