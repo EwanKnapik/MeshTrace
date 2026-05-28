@@ -490,7 +490,7 @@ class TriangleModel:
         return self._instance_feature
 
     def set_instance_feature(self, instance_features):
-        assert instance_features.shape[0] == self._triangle_indices.shape[0]
+        assert instance_features.shape[0] == self.vertices.shape[0]
         self._instance_feature = instance_features
        
     @property

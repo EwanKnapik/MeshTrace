@@ -158,6 +158,7 @@ class OptimizationParams(ParamGroup):
         self.sample_num = 4096
         self.feature_dim = 16
         self.contrastive_lr = 0.001
+        self.debug_optim_sample_size = 128
         self.grad_vis_interval = 0
         self.grad_vis_dir = "grad_vis"
 

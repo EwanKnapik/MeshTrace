@@ -22,6 +22,28 @@ from utils.general_utils import safe_state
 from tqdm import tqdm
 from argparse import ArgumentParser
 from arguments import ModelParams, PipelineParams, OptimizationParams
+from sklearn.decomposition import PCA
+import matplotlib.pyplot as plt
+
+def _project_instance_image_for_plot(instance_image):
+    with torch.no_grad():
+        channels, height, width = instance_image.shape
+        flat_pixels = (
+            instance_image.detach()
+            .permute(1, 2, 0)
+            .reshape(-1, channels)
+            .float()
+            .cpu()
+            .numpy()
+        )
+        projected = PCA(n_components=3).fit_transform(flat_pixels).reshape(height, width, 3)
+        projected -= projected.min(axis=(0, 1), keepdims=True)
+        scale = projected.max(axis=(0, 1), keepdims=True)
+        scale[scale == 0] = 1.0
+        projected = projected / scale
+        return torch.from_numpy(projected).permute(2, 0, 1).float()
+
+
 
 def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name):
     first_iter = 0
@@ -61,6 +83,21 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
 
         render_pkg = render(viewpoint_cam, triangles, pipe, background, include_feature=True)
         instance_image = render_pkg["instance_image"]
+        was_rendered=render_pkg["was_rendered"]
+        render_image=render_pkg["render"]
+        if iteration %1000==0:
+            instance_image_rgb = _project_instance_image_for_plot(instance_image)
+            plt.figure()
+            plt.imshow(instance_image_rgb.permute(1, 2, 0).cpu().numpy())
+            plt.axis("off")
+            plt.savefig(f"instance_map/instance_map_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
+            plt.close()
+
+            plt.figure()
+            plt.imshow(render_image.permute(1, 2, 0).detach().cpu().numpy())
+            plt.axis("off")
+            plt.savefig(f"renders_images/render_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
+            plt.close()
         instance_features = instance_image.permute(1, 2, 0).reshape(-1, instance_image.shape[0])
         
         temperature = 100
@@ -94,8 +131,7 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
-                    "Vertices": f"{triangles.get_vertices.shape[0]}",
-                    "shape features": f"{triangles.get_instance_feature.shape}"
+                    "was rendered": f"{was_rendered.sum()}"
                 }
                 progress_bar.set_postfix(loss_dict)
                 progress_bar.update(10)

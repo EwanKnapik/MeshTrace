@@ -104,6 +104,7 @@ def render(viewpoint_camera, pc: TriangleModel, pipe, bg_color: torch.Tensor, in
     rets =  {"render": rendered_image,
              "instance_image":instance_image, 
             "radii": radii,
+            "was_rendered":was_rendered
     }
 
     return rets
