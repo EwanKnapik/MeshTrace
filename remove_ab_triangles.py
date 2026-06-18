@@ -26,47 +26,12 @@ from arguments import ModelParams, PipelineParams, OptimizationParams
 from utils.render_utils import save_img_f32, save_img_u8
 import numpy as np
 
+
 try:
     from torch.utils.tensorboard import SummaryWriter
     TENSORBOARD_FOUND = True
 except ImportError:
     TENSORBOARD_FOUND = False
-
-
-def get_obj_by_mask(triangles, mask, inverse=False):
-    """Extract a subset of triangles by mask on triangle indices."""
-    if inverse:
-        mask = ~mask
-    obj = TriangleModel(triangles.max_sh_degree)
-    with torch.no_grad():
-        obj.vertices = triangles.vertices.clone().detach().requires_grad_(False)
-        obj._triangle_indices = triangles._triangle_indices[mask].clone()
-        obj.vertex_weight = triangles.vertex_weight.clone().detach().requires_grad_(False)
-        obj._sigma = triangles._sigma
-        obj.active_sh_degree = triangles.active_sh_degree
-        obj._features_dc = triangles._features_dc.clone().detach().requires_grad_(False)
-        obj._features_rest = triangles._features_rest.clone().detach().requires_grad_(False)
-        obj.image_size = torch.zeros((obj._triangle_indices.shape[0],), dtype=torch.float, device="cuda")
-        obj.importance_score = torch.zeros((obj._triangle_indices.shape[0],), dtype=torch.float, device="cuda")
-        obj.pixel_count = torch.zeros((obj._triangle_indices.shape[0],), dtype=torch.int, device="cuda")
-    return obj
-
-
-def render_by_mask(triangles, mask, path, viewpoints, pipe, background):
-    with torch.no_grad():
-        if mask is not None:
-            obj = get_obj_by_mask(triangles, mask)
-        else:
-            obj = triangles
-        for idx, viewpoint in enumerate(viewpoints):
-            render_pkg = render(viewpoint, obj, pipe, background)
-            img = render_pkg["render"]
-            if img.sum() < 200:
-                continue
-            os.makedirs(path, exist_ok=True)
-            save_img_u8(img.permute(1, 2, 0).cpu().numpy(),
-                        os.path.join(path, 'RGB_{0:05d}'.format(idx) + ".png"))
-
 
 def get_weights(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=False):
     with torch.no_grad():
@@ -79,30 +44,29 @@ def get_weights(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=Fals
             id_masks[id_masks > 1] = 0
             w = trace(view, triangles, id_masks, pipe, background, alpha_w=alpha_w)
             unseen_mask = (w.sum(-1) == 0)
-            w = torch.argmax(w, dim=-1)
+            w = torch.sum(w, dim=-1)
             w[unseen_mask] = -1
             weights[:, idx] = w
     return weights
 
-
-def split_mask(triangles, viewpoints, pipe, background, threshold=2, sp_th=1, soft_th=0.8, alpha_w=False):
+# mask of triangles to delete
+def split_mask(triangles, viewpoints, pipe, background, sp_th=1, soft_th=0.8):
     with torch.no_grad():
-        num_triangles = triangles._triangle_indices.shape[0]
-        nums = torch.zeros(num_triangles, dtype=torch.int16).cuda()
-        ab_nums = torch.zeros(num_triangles, dtype=torch.int16).cuda()
+        nums = torch.zeros(triangles.get_triangle_indices.shape[0], dtype=torch.int16).cuda()
+        ab_nums = torch.zeros(triangles.get_triangle_indices.shape[0], dtype=torch.int16).cuda()
         for idx, view in enumerate(viewpoints):
             sam_mask = view.sam_mask.copy()
-            id_masks = torch.tensor(sam_mask, dtype=torch.int16, device="cpu")
-            id_masks = id_masks.cuda()
-
-            w = trace(view, triangles, id_masks, id_masks.max(), pipe, background, alpha_w)
-            seen = w.sum(-1) > threshold
+            id_masks = torch.tensor(sam_mask, dtype=torch.int16, device="cuda")
+            
+            w = trace(view, triangles, id_masks, pipe, background)
+            seen = w.sum(-1) > 0
             value, _ = torch.max(w, dim=-1)
-            value = value / (w.sum(-1) + 1e-6)
             ab = (value < soft_th) & seen
             nums += seen
             ab_nums += ab
-
+        # number of time triangle seen with ambiguous value / number of time seen
+        # if ratio is too high, means that triangle seen most of the time with ambiguous value
+        # if across all views: bad means that generally bad → flag
         sp_mask = (ab_nums / (nums + 1e-6)) > sp_th
 
     return sp_mask
@@ -113,6 +77,15 @@ def prune_mask(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=False
     p_mask = ((weights != unseen).sum(-1) == 0)
     return p_mask.cuda()
 
+def prune_mask_from_was_rendered(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=False):
+    with torch.no_grad():
+        num_triangles = triangles.get_triangle_indices.shape[0]
+        mask=torch.zeros(num_triangles).cuda()
+        for idx, view in enumerate(viewpoints):
+            render_pkg = render(view, triangles, pipe, background)
+            was_rendered=render_pkg["triangle_was_rendered"]
+            mask+= was_rendered
+        return ~(mask!=0)
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, alpha_w):
 
@@ -141,8 +114,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
     cycle_interval = opt.split_cycle_interval if hasattr(opt, 'split_cycle_interval') else 1000
     scale = 0.8#越大分出来的越小
     threshold = 25       # unseen threshold
-    soft_th = 0.8        # lower = less strict
-    sp_th = 0.4
+    soft_th = opt.soft_th        # lower = less strict
+    sp_th = opt.sp_th
 
     progress_bar = tqdm(range(first_iter, opt.iterations), desc="Training progress")
     first_iter += 1
@@ -217,7 +190,10 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if getattr(opt, 'prune', False):
                 if iteration == 1 or iteration == opt.iterations:
                     with torch.no_grad():
-                        p_mask = prune_mask(triangles, viewpoints, pipe, background, unseen=-1).cuda()
+                        p_mask = prune_mask_from_was_rendered(triangles, viewpoints, pipe, background, unseen=-1).cuda()
+                        print(f"p_mask : {p_mask.sum()}")
+                        #p_mask = split_mask(triangles, viewpoints, pipe, background,
+                        #                    sp_th=sp_th, soft_th=soft_th)
                         # prune_triangles uses a KEEP mask (opposite of GaussianModel)
                         triangles.prune_triangles(~p_mask)
                         print('delete {} triangles, total {} triangles now'.format(
@@ -229,7 +205,7 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
             if getattr(opt, 'split', False) and iteration >= cycle_from:
                 if pcycle > 0 and (iteration - cycle_from) % cycle_interval == 0:
                     sp_mask = split_mask(triangles, viewpoints, pipe, background,
-                                        threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
+                                        sp_th=sp_th, soft_th=soft_th)
                     pre_split_num = sp_mask.sum()
                     tri_areas = triangles.triangle_areas()
                     print(f'sp_mask num:{pre_split_num} total:{num_triangles}, '

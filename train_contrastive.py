@@ -15,7 +15,8 @@ import sys
 
 from random import randint
 from utils.loss_utils import contrastive_loss
-from triangle_renderer.render_feature import render
+from triangle_renderer.render_feature import render as render_from_feature_rasterizer
+from triangle_renderer import render as render_from_rgb_rasterizer
 from scene import Scene, TriangleModel
 from scene.triangle_model import resolve_point_cloud_state_path
 from utils.general_utils import safe_state
@@ -45,6 +46,71 @@ def _project_instance_image_for_plot(instance_image):
 
 
 
+def compute_instance_feature_via_id_map(viewpoint_cam, triangles : TriangleModel, pipe, background):
+    render_pkg = render_from_rgb_rasterizer(viewpoint_cam, triangles, pipe, background)
+    rend_ids = render_pkg["rend_ids"][0]
+
+    stored_instance_features = triangles.get_instance_feature
+    if stored_instance_features is None:
+        raise ValueError("Triangle model does not contain instance features.")
+
+    num_triangles = triangles.get_triangle_indices.shape[0]
+    num_vertices = triangles.get_vertices.shape[0]
+    if stored_instance_features.shape[0] == num_triangles:
+        triangle_instances = stored_instance_features
+    elif stored_instance_features.shape[0] == num_vertices:
+        triangle_indices = triangles.get_triangle_indices.long()
+        triangle_instances = (
+            triangles.get_vertex_weight * stored_instance_features
+        )[triangle_indices].sum(dim=1)
+    else:
+        raise ValueError(
+            f"instance_feature has {stored_instance_features.shape[0]} rows, "
+            f"but expected either {num_triangles} triangle features or "
+            f"{num_vertices} vertex features."
+        )
+
+    num_instances = triangle_instances.shape[0]
+    in_bounds = torch.isfinite(rend_ids) & (rend_ids >= 0) & (rend_ids < num_instances)
+    rend_ids_inbounds = rend_ids[in_bounds].long()
+
+    height, width = rend_ids.shape
+    feature_dim = triangle_instances.shape[1]
+    instance_features_for_plot = torch.zeros(
+        (height, width, feature_dim),
+        dtype=triangle_instances.dtype,
+        device=triangle_instances.device,
+    )
+    if bool(in_bounds.any().item()):
+        instance_features_for_plot[in_bounds] = triangle_instances[rend_ids_inbounds]
+    instance_features = instance_features_for_plot[in_bounds]
+
+    sam_mask = torch.as_tensor(
+        viewpoint_cam.sam_mask,
+        dtype=torch.int,
+        device=triangle_instances.device,
+    )
+    if sam_mask.shape != rend_ids.shape:
+        if sam_mask.numel() != rend_ids.numel():
+            raise ValueError(
+                f"sam_mask shape {tuple(sam_mask.shape)} does not match "
+                f"rend_ids shape {tuple(rend_ids.shape)}."
+            )
+        sam_mask = sam_mask.reshape(rend_ids.shape)
+
+    sam_mask = sam_mask[in_bounds]
+    return instance_features, sam_mask, instance_features_for_plot
+
+
+def compute_instance_feature_via_feature_rasterizer(viewpoint_cam, triangles, pipe, background):
+    render_pkg = render_from_feature_rasterizer(viewpoint_cam, triangles, pipe, background, include_feature=True)
+    instance_image = render_pkg["instance_image"]
+    instance_features = instance_image.permute(1, 2, 0).reshape(-1, instance_image.shape[0])
+
+    sam_mask = torch.from_numpy(viewpoint_cam.sam_mask).to(torch.int).view(-1).cuda()
+    return instance_features, sam_mask, instance_image.permute(1, 2, 0)
+
+
 def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name):
     first_iter = 0
     triangles = TriangleModel(dataset.sh_degree)
@@ -56,7 +122,7 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
     checkpoint_path = resolve_point_cloud_state_path(checkpoint)
     model_params = torch.load(checkpoint_path, map_location="cuda", weights_only=False)
     triangles.restore(model_params, opt)
-
+    triangles.update_min_weight(1)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
@@ -81,37 +147,31 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
-        render_pkg = render(viewpoint_cam, triangles, pipe, background, include_feature=True)
-        instance_image = render_pkg["instance_image"]
-        was_rendered=render_pkg["was_rendered"]
-        render_image=render_pkg["render"]
+        instance_features, sam_mask, instance_features_for_plot=compute_instance_feature_via_feature_rasterizer(viewpoint_cam,triangles, pipe, background)
+
         if iteration %1000==0:
-            instance_image_rgb = _project_instance_image_for_plot(instance_image)
+            instance_image_rgb = _project_instance_image_for_plot(instance_features_for_plot.permute(2, 0, 1))
             plt.figure()
+            plt.subplot(1, 2, 1)
             plt.imshow(instance_image_rgb.permute(1, 2, 0).cpu().numpy())
+            plt.subplot(1, 2, 2)
+            plt.imshow(sam_mask.reshape(instance_image_rgb.shape[1:]).cpu().numpy())
             plt.axis("off")
-            plt.savefig(f"instance_map/instance_map_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
+            plt.savefig(f"instance_map/instance_map_new_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
             plt.close()
 
-            plt.figure()
-            plt.imshow(render_image.permute(1, 2, 0).detach().cpu().numpy())
-            plt.axis("off")
-            plt.savefig(f"renders_images/render_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
-            plt.close()
-        instance_features = instance_image.permute(1, 2, 0).reshape(-1, instance_image.shape[0])
-        
         temperature = 100
         main_loss = 0
-
-        sam_mask = torch.from_numpy(viewpoint_cam.sam_mask).to(torch.int).view(-1).cuda()
-        sample_num = opt.sample_num
-        n_sample = min(int(len(sam_mask)/sample_num)+1, 1)
 
         #filter out the zero instances
         instance_features = instance_features[sam_mask > 0]
         sam_mask = sam_mask[sam_mask > 0]
+        if len(instance_features) == 0:
+            triangles.optimizer.zero_grad(set_to_none=True)
+            continue
 
-
+        sample_num = opt.sample_num
+        n_sample = min(int(len(sam_mask)/sample_num)+1, 1)
         index = torch.randperm(len(instance_features), device=instance_features.device)
         for sample_i in range(n_sample):
             sample_idx = index[sample_i*sample_num:(sample_i+1)*sample_num]
@@ -120,7 +180,7 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
             con_loss = contrastive_func(features, instance_labels, temperature)
             main_loss += con_loss
         loss = main_loss / n_sample
-
+        
         total_loss = loss
         total_loss.backward()
         iter_end.record()
@@ -131,7 +191,6 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
-                    "was rendered": f"{was_rendered.sum()}"
                 }
                 progress_bar.set_postfix(loss_dict)
                 progress_bar.update(10)

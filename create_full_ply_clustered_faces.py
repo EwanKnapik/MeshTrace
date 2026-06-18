@@ -14,13 +14,13 @@ import os
 
 def perform_dbscan(input_tensor):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
-    clustering = DBSCAN(eps=11, min_samples=1000).fit(input_tensor_df)
+    clustering = DBSCAN(eps=0.1, min_samples=100).fit(input_tensor_df)
     return clustering.labels_
     
 
 def perform_kmeans(input_tensor):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
-    clustering = KMeans(n_clusters=20).fit(input_tensor_df)
+    clustering = KMeans(n_clusters=10).fit(input_tensor_df)
     return clustering.labels_
 
 
@@ -30,18 +30,18 @@ def load_scene(path,device):
 
 def segment_scene(path,device,output_name):
     state_dict = load_scene(os.path.join(path,"point_cloud_state_dict.pt"), device=device)
-    instance_feature=state_dict["instance_feature"]
-    vertex_weight=state_dict["vertex_weight"]
-    vertices=state_dict["triangles_points"]
-    triangles_indices=state_dict["_triangle_indices"]
-    instance_feature_weighted=vertex_weight*instance_feature
-    triangle_instance=instance_feature_weighted[triangles_indices].sum(dim=1)
+    triangle_instance=state_dict["instance_feature"]
+    #vertex_weight=state_dict["vertex_weight"]
+    #vertices=state_dict["triangles_points"]
+    #triangles_indices=state_dict["_triangle_indices"]
+    #instance_feature_weighted=vertex_weight*instance_feature
+    #triangle_instance=instance_feature_weighted[triangles_indices].sum(dim=1)
     print(triangle_instance.shape)
 
 
 
-    labels=perform_dbscan(triangle_instance)
-    #labels=perform_kmeans(triangle_instance)
+    #labels=perform_dbscan(triangle_instance)
+    labels=perform_kmeans(triangle_instance)
     
     
     

@@ -44,9 +44,9 @@ def print_img_from_id_map(viewpoint_camera, pc :TriangleModel, pipe, bg_color) -
     instance_features=pc.get_instance_feature
     if instance_features is None:
         raise ValueError("The loaded model does not contain instance features.")
-    triangles_indices=pc.get_triangle_indices
-    instance_feature_weighted=vertex_weight*instance_features
-    triangle_instance=instance_feature_weighted[triangles_indices].sum(dim=1)
+    #triangles_indices=pc.get_triangle_indices
+    #instance_feature_weighted=vertex_weight*instance_features
+    #triangle_instance=instance_feature_weighted[triangles_indices].sum(dim=1)
 
 
     render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
@@ -65,7 +65,9 @@ def print_img_from_id_map(viewpoint_camera, pc :TriangleModel, pipe, bg_color) -
     )
     if bool(valid_rend_ids.any().item()):
         safe_ids = rend_ids[valid_rend_ids].long()
-        instance_image[valid_rend_ids] = triangle_instance[safe_ids]
+        #instance_image[valid_rend_ids] = triangle_instance[safe_ids]
+        instance_image[valid_rend_ids] = instance_features[safe_ids]
+
     instance_image = instance_image.permute(2, 0, 1).contiguous()
 
     instance_image_rgb = _project_instance_image_for_plot(instance_image)
@@ -114,7 +116,7 @@ def main():
     camera_stack=scene.getTrainCameras().copy()
     viewpoint_cam = camera_stack.pop(10)
     print_img_from_id_map(viewpoint_cam,triangles,pipe,background)
-    print_img_from_feature_rasterizer(viewpoint_cam,triangles,pipe,background)
+    #print_img_from_feature_rasterizer(viewpoint_cam,triangles,pipe,background)
 
 if __name__ == "__main__":
     main()

@@ -16,7 +16,17 @@ from scene.triangle_model import TriangleModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
 
-def render(viewpoint_camera, pc: TriangleModel, pipe, bg_color: torch.Tensor, include_feature: bool = False, scaling_modifier: float = 1.0, override_color=None, renderid: bool = False):
+def render(
+    viewpoint_camera,
+    pc: TriangleModel,
+    pipe,
+    bg_color: torch.Tensor,
+    include_feature: bool = False,
+    scaling_modifier: float = 1.0,
+    override_color=None,
+    renderid: bool = False,
+    print_triangle_stats: bool = False,
+):
     """
     Render the scene. 
     
@@ -67,6 +77,7 @@ def render(viewpoint_camera, pc: TriangleModel, pipe, bg_color: torch.Tensor, in
         if pipe.convert_SHs_python:
             features = pc.get_features.contiguous()
             shs_view = features.transpose(1, 2).contiguous().view(-1, 3, (pc.max_sh_degree + 1) ** 2)
+            camera_center = viewpoint_camera.camera_center
             dir_pp = (vertices - camera_center.repeat(features.shape[0], 1))
             dir_pp_normalized = dir_pp/dir_pp.norm(dim=1, keepdim=True)
             sh2rgb = eval_sh(pc.active_sh_degree, shs_view, dir_pp_normalized)
@@ -77,12 +88,11 @@ def render(viewpoint_camera, pc: TriangleModel, pipe, bg_color: torch.Tensor, in
     else:
         colors_precomp = override_color.contiguous()
         
+    instance_feature_precomp = None
     if include_feature:
-        if not renderid:
-            instance_feature_precomp = pc.get_instance_feature
-
+        instance_feature_precomp = pc.get_instance_feature
     else:
-        instance_feature_precomp = torch.zeros((1,), dtype=opacity.dtype, device=opacity.device)#lang
+        instance_feature_precomp = torch.zeros((1,), dtype=vertices.dtype, device=vertices.device)
 
     scaling = torch.zeros(
         triangle_indices.shape[0],
@@ -99,12 +109,24 @@ def render(viewpoint_camera, pc: TriangleModel, pipe, bg_color: torch.Tensor, in
         colors_precomp = colors_precomp,
         instance_feature_precomp =instance_feature_precomp ,
     )
+
+    if print_triangle_stats:
+        with torch.no_grad():
+            kept_after_preprocess = int((radii > 0).sum().item())
+            actually_rendered = int((was_rendered > 0).sum().item())
+            total_triangles = int(triangle_indices.shape[0])
+            print(
+                f"[FEATURE RENDER] total_triangles={total_triangles} "
+                f"kept_after_preprocess={kept_after_preprocess} "
+                f"actually_rendered={actually_rendered}"
+            )
     
 
     rets =  {"render": rendered_image,
              "instance_image":instance_image, 
             "radii": radii,
-            "was_rendered":was_rendered
+            "scaling": scaling,
+            "was_rendered": was_rendered
     }
 
     return rets

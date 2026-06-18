@@ -6,15 +6,18 @@ from pathlib import Path
 import cv2
 import numpy as np
 from joblib import Parallel, delayed
+import tifffile
 
 from read_write_model import qvec2rotmat, read_model
 
 try:
     from utils.depth_utils import load_depth_image
     from utils.replica_utils import build_replica_pose_map, discover_replica_rgb_frames
+    from utils.klevr_utils import build_klevr_pose_map, discover_klevr_train_frames
 except ModuleNotFoundError:
     from depth_utils import load_depth_image
     from replica_utils import build_replica_pose_map, discover_replica_rgb_frames
+    from klevr_utils import build_klevr_pose_map, discover_klevr_train_frames
 
 
 def robust_scale_and_offset(reference_values, predicted_values):
@@ -117,6 +120,48 @@ def get_replica_scales(frame_id, base_dir, depths_dir):
     scale, offset = robust_scale_and_offset(inv_gt_depth, inv_mono_depth)
     return {"image_name": f"rgb_{frame_id}", "scale": scale, "offset": offset}
 
+def get_klevr_scales(frame, base_dir, depths_dir):
+    frame_id, image_path = frame
+    image_name = image_path.stem          # "r_0"
+    split = image_path.parent.name        # "train", "test", "val"
+
+    # Prefer true float depth if available.
+    gt_depth_path = Path(base_dir) / "tiff_depth" / f"{split}_r_{frame_id}_depth_0000.tiff"
+    if gt_depth_path.exists():
+        gt_depth = tifffile.imread(gt_depth_path).astype(np.float32)
+    else:
+        gt_depth_path = Path(base_dir) / "depth" / f"r_{frame_id}.png"
+        gt_depth = load_depth_image(gt_depth_path)
+
+    mono_depth_path = Path(depths_dir) / f"r_{frame_id}.png"
+    inv_mono_depth = load_depth_image(mono_depth_path)
+
+    if gt_depth is None or inv_mono_depth is None:
+        return None
+
+    if inv_mono_depth.shape != gt_depth.shape:
+        inv_mono_depth = cv2.resize(
+            inv_mono_depth,
+            (gt_depth.shape[1], gt_depth.shape[0]),
+            interpolation=cv2.INTER_LINEAR,
+        )
+
+    valid = (
+        np.isfinite(gt_depth)
+        & np.isfinite(inv_mono_depth)
+        & (gt_depth > 1e-6)
+        & (inv_mono_depth > 0)
+        & (gt_depth < 1e8)   # useful for huge TIFF background values
+    )
+    if valid.sum() <= 100:
+        return None
+
+    inv_gt_depth = 1.0 / gt_depth[valid]
+    inv_mono_depth = inv_mono_depth[valid]
+
+    scale, offset = robust_scale_and_offset(inv_gt_depth, inv_mono_depth)
+    return {"image_name": image_name, "scale": scale, "offset": offset}
+
 
 def detect_dataset_type(base_dir, dataset_type):
     if dataset_type != "auto":
@@ -124,6 +169,10 @@ def detect_dataset_type(base_dir, dataset_type):
 
     if (Path(base_dir) / "traj_w_c.txt").exists():
         return "replica"
+    if (Path(base_dir) / "metadata.json").exists():
+        return "klevr"
+    if (Path(base_dir) / "transforms_train.json").exists():
+        return "blender"
     return "colmap"
 
 
@@ -132,7 +181,7 @@ if __name__ == "__main__":
     parser.add_argument("--base_dir", default="../data/big_gaussians/standalone_chunks/campus")
     parser.add_argument("--depths_dir", default="../data/big_gaussians/standalone_chunks/campus/depths_any")
     parser.add_argument("--model_type", default="bin")
-    parser.add_argument("--dataset_type", choices=("auto", "colmap", "replica"), default="auto")
+    parser.add_argument("--dataset_type", choices=("auto", "colmap", "replica", "blender", "klevr"), default="auto")
     args = parser.parse_args()
 
     dataset_type = detect_dataset_type(args.base_dir, args.dataset_type)
@@ -158,7 +207,7 @@ if __name__ == "__main__":
             )
             for key in images_metas
         )
-    else:
+    elif dataset_type == "replica":
         rgb_frames = discover_replica_rgb_frames(args.base_dir)
         frame_ids = [frame_id for frame_id, _ in rgb_frames]
         build_replica_pose_map(Path(args.base_dir) / "traj_w_c.txt", frame_ids)
@@ -166,6 +215,15 @@ if __name__ == "__main__":
         depth_param_list = Parallel(n_jobs=-1, backend="threading")(
             delayed(get_replica_scales)(frame_id, args.base_dir, args.depths_dir)
             for frame_id in frame_ids
+        )
+    elif dataset_type == "klevr":
+        klevr_frames = discover_klevr_train_frames(args.base_dir)
+        frame_ids = [frame_id for frame_id, _ in klevr_frames]
+        build_klevr_pose_map(Path(args.base_dir) / "transforms_train.json", frame_ids)
+
+        depth_param_list = Parallel(n_jobs=-1, backend="threading")(
+            delayed(get_klevr_scales)(frame,args.base_dir, args.depths_dir)
+            for frame in klevr_frames
         )
 
     depth_params = {

@@ -320,7 +320,44 @@ def readColmapSceneInfo(path, images, eval,sam_folder, llffhold=8, aug=False):
                            ply_path=ply_path)
     return scene_info
 
-def readCamerasFromTransforms(path, images, transformsfile, white_background, sam_folder='non',extension=".png"):
+
+def transform_depth_keys(frame_file_path):
+    frame_path = Path(frame_file_path).with_suffix("")
+    parts = [part for part in frame_path.parts if part not in ("", ".")]
+    frame_path = Path(*parts) if parts else frame_path
+    image_name = frame_path.name
+
+    keys = []
+    if frame_path.parent != Path("."):
+        keys.append(frame_path.as_posix())
+        keys.append(f"{frame_path.parent.name}_{image_name}")
+    keys.append(image_name)
+    return keys
+
+
+def find_transform_depth_path(depths_folder, frame_file_path):
+    if not os.path.isdir(depths_folder):
+        return ""
+
+    frame_path = Path(frame_file_path).with_suffix("")
+    parts = [part for part in frame_path.parts if part not in ("", ".")]
+    frame_path = Path(*parts) if parts else frame_path
+    image_name = frame_path.name
+    depths_folder = Path(depths_folder)
+
+    candidates = []
+    if frame_path.parent != Path("."):
+        candidates.append(depths_folder / frame_path.parent / f"{image_name}.png")
+        candidates.append(depths_folder / f"{frame_path.parent.name}_{image_name}.png")
+    candidates.append(depths_folder / f"{image_name}.png")
+
+    for candidate in candidates:
+        if candidate.exists():
+            return str(candidate)
+    return ""
+
+
+def readCamerasFromTransforms(path, images, transformsfile, white_background, depths_params=None, depths_folder="", sam_folder='non',extension=".png"):
     cam_infos = []
 
     image_set="train" if "train" in transformsfile else "test"
@@ -330,8 +367,8 @@ def readCamerasFromTransforms(path, images, transformsfile, white_background, sa
     if sam_folder in ['overlap','split','origin_overlap','pre_union','sam_origin_cover','split_ms']:
         print(f"Reading SAM masks from folder: {sam_folder}")
         print(f"Looking for SAM masks in: {dataset}/sam/{sam_folder}/*.npy")
-        #sam_paths = glob_data(os.path.join(dataset ,image_set , "sam" ,os.path.join(sam_folder) ,"*.npy"))
-        sam_paths = glob_data(os.path.join(dataset , "sam" ,os.path.join(sam_folder) ,"*.npy"))
+        sam_paths = glob_data(os.path.join(dataset ,image_set , "sam" ,os.path.join(sam_folder) ,"*.npy"))
+        #sam_paths = glob_data(os.path.join(dataset , "sam" ,os.path.join(sam_folder) ,"*.npy"))
     else:
         sam_paths=None
     sam_i=0
@@ -357,6 +394,7 @@ def readCamerasFromTransforms(path, images, transformsfile, white_background, sa
 
             image_path = os.path.join(path, cam_name)
             image_name = Path(cam_name).stem
+            print(image_name)
             image = Image.open(image_path)
 
             im_data = np.array(image.convert("RGBA"))
@@ -371,6 +409,17 @@ def readCamerasFromTransforms(path, images, transformsfile, white_background, sa
             FovY = fovy 
             FovX = fovx
 
+            frame_depth_keys = transform_depth_keys(frame["file_path"])
+            depth_params = None
+            if depths_params is not None:
+                for depth_key in frame_depth_keys:
+                    if depth_key in depths_params:
+                        depth_params = depths_params[depth_key]
+                        break
+                if depth_params is None:
+                    print("\n", frame_depth_keys[-1], "not found in depths_params")
+
+            depth_path = find_transform_depth_path(depths_folder, frame["file_path"])
 
             #read sam masks
             if (sam_paths is not None ):
@@ -387,18 +436,41 @@ def readCamerasFromTransforms(path, images, transformsfile, white_background, sa
                 id_masks=None
 
             cam_infos.append(CameraInfo(uid=idx, R=R, T=T, FovY=FovY, FovX=FovX, image=image,
-                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1],sam_mask=id_masks))
+                            image_path=image_path, image_name=image_name, width=image.size[0], height=image.size[1],
+                            depth_params=depth_params, depth_path=depth_path, sam_mask=id_masks))
             
     return cam_infos
 
 def readNerfSyntheticInfo(path, images, white_background, eval,sam_folder, extension=".png"):
 
+    # Load depth scale and offset information
+    depth_params_file = os.path.join(path, "sparse/0", "depth_params.json")
+    depths_params = load_depth_params(depth_params_file)
+    depths_folder = os.path.join(path, "depth")
     
     
     print("Reading Training Transforms")
-    train_cam_infos = readCamerasFromTransforms(path, images, "transforms_train.json", white_background, sam_folder, extension)
+    train_cam_infos = readCamerasFromTransforms(
+        path,
+        images,
+        "transforms_train.json",
+        white_background,
+        depths_params,
+        depths_folder,
+        sam_folder,
+        extension,
+    )
     print("Reading Test Transforms")
-    test_cam_infos = readCamerasFromTransforms(path, images, "transforms_test.json", white_background, sam_folder, extension)
+    test_cam_infos = readCamerasFromTransforms(
+        path,
+        images,
+        "transforms_test.json",
+        white_background,
+        depths_params,
+        depths_folder,
+        sam_folder,
+        extension,
+    )
     
     if not eval:
         train_cam_infos.extend(test_cam_infos)
@@ -422,6 +494,7 @@ def readNerfSyntheticInfo(path, images, white_background, eval,sam_folder, exten
         pcd = fetchPly(ply_path)
     except:
         pcd = None
+
 
     scene_info = SceneInfo(point_cloud=pcd,
                            train_cameras=train_cam_infos,

@@ -23,7 +23,7 @@ from sixel import converter, sixel
 from io import BytesIO
 import matplotlib.pyplot as plt
 from PIL import Image
-from create_full_ply import create_ply_rgb
+#from create_full_ply_clustered import create_ply_rgb
 import colorsys
 import time
 import matplotlib
@@ -319,6 +319,29 @@ mask2: torch.Tensor
     return
 
 
+# mask of triangles to delete
+def split_mask(triangles, viewpoints, pipe, background, sp_th=1, soft_th=0.8):
+    with torch.no_grad():
+        nums = torch.zeros(triangles.get_triangle_indices.shape[0], dtype=torch.int16).cuda()
+        ab_nums = torch.zeros(triangles.get_triangle_indices.shape[0], dtype=torch.int16).cuda()
+        for idx, view in enumerate(viewpoints):
+            sam_mask = view.sam_mask.copy()
+            id_masks = torch.tensor(sam_mask, dtype=torch.int16, device="cuda")
+            
+            w = trace(view, triangles, id_masks, pipe, background)
+            seen = w.sum(-1) > 0
+            value, _ = torch.max(w, dim=-1)
+            ab = (value < soft_th) & seen
+            nums += seen
+            ab_nums += ab
+        # number of time triangle seen with ambiguous value / number of time seen
+        # if ratio is too high, means that triangle seen most of the time with ambiguous value
+        # if across all views: bad means that generally bad → flag
+        sp_mask = (ab_nums / (nums + 1e-6)) > sp_th
+
+    return sp_mask
+
+
 def main():
     matplotlib.rcParams["backend"] = "Agg"
     parser = ArgumentParser(description="Extract objects — triangle splatting mask repair")
@@ -336,6 +359,7 @@ def main():
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
+    print("test")
     triangles = TriangleModel(dataset.sh_degree)
     scene = Scene(args=dataset,
                   triangles=triangles,
@@ -345,30 +369,27 @@ def main():
                   shuffle=False)
     
     # Per view: tensor of shape (num_masks_in_view, H, W), dtype=bool.
+    print("test")
 
-    start=time.time()
-    per_view_binary_masks = []
-    weights = compute_weights(scene.getTrainCameras(),pipe,triangles,background)
-    for idx, camera in enumerate(scene.getTrainCameras()):
-        sam_mask = torch.from_numpy(camera.sam_mask.copy()).to(device="cuda", dtype=torch.long)
+    # sp_th : threshold of ratio of ambiguous views
+    # if 0.3, keep triangles that are of certain value in at least 1-0.3=70% of views
+    # soft_th : at which max confidence value is the triangle considered certain
 
-        # Build binary masks for all labels in this view (excluding 0/background).
-        labels = torch.unique(sam_mask)
-        labels = labels[labels > 0]
-
-        view_masks = sam_mask.unsqueeze(0) == labels.view(-1, 1, 1)
-
-        per_view_binary_masks.append(view_masks)
-
-    end=time.time()
-    
-    print(f"{end-start} seconds elapseds")
-    t = torch.cuda.get_device_properties(0).total_memory
-    r = torch.cuda.memory_reserved(0)
-    a = torch.cuda.memory_allocated(0)
-    f = r-a  # free inside reserved
-    print(f"free {f}, total {t}, reserved {r}, allocated {a}")
-
+    print(triangles.get_triangle_indices.shape)
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=0.3,soft_th=0.5)
+    print(mask.sum())
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=0.3,soft_th=0.8)
+    print(mask.sum())
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=0.2,soft_th=1)
+    print(mask.sum())
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=0.1,soft_th=1)
+    print(mask.sum())
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=0.5,soft_th=0.8)
+    print(mask.sum())
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=0.8,soft_th=0.8)
+    print(mask.sum())
+    mask=split_mask(triangles,scene.getTrainCameras(),pipe,background,sp_th=1,soft_th=0.8)
+    print(mask.sum())
     
 
 

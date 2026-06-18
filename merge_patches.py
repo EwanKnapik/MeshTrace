@@ -60,6 +60,7 @@ class MaskRepairPipeline:
         # image_id=int(image_name[4:])
         # return f"{image_id:05d}_masks_sam.npy"
         return f"{image_name}.npy"
+        #return f"{image_name}_sam.npy"
     
     def nvos_sam(self,image_name):
         return f"{image_name}.npy"

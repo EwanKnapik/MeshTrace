@@ -154,6 +154,10 @@ class OptimizationParams(ParamGroup):
         self.prune = False
         self.split = False
 
+        # split thresholds
+        self.sp_th = 0.4
+        self.soft_th = 0.8
+
         # Contrastive feature training
         self.sample_num = 4096
         self.feature_dim = 16

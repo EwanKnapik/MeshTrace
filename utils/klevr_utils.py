@@ -3,27 +3,27 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 import numpy as np
+import json
 
-
-RGB_FRAME_PATTERN = re.compile(r"^rgb_(\d+)\.png$")
-
-
-def extract_frame_id_replica(path_or_name, pattern=RGB_FRAME_PATTERN) -> int:
+def extract_frame_id_klevr(path_or_name) -> int:
     name = Path(path_or_name).name
-    match = pattern.match(name)
-    if match is None:
-        raise ValueError(f"Could not extract Replica frame id from '{name}'.")
-    return int(match.group(1))
+    return int(name.split("/")[-1].split("_")[-1].split(".")[0])
 
+def discover_klevr_train_frames(input_folder) -> List[Tuple[int,Path]]:
+    train_dir = Path(input_folder) / "train"
+    train_paths = sorted(train_dir.glob("r_*.png"), key=extract_frame_id_klevr)
+    return [(extract_frame_id_klevr(train_path),train_path) for train_path in train_paths]
 
-def discover_replica_rgb_frames(input_folder) -> List[Tuple[int, Path]]:
-    rgb_dir = Path(input_folder) / "rgb"
-    rgb_paths = sorted(rgb_dir.glob("rgb_*.png"), key=extract_frame_id_replica)
-    return [(extract_frame_id_replica(rgb_path), rgb_path) for rgb_path in rgb_paths]
+def build_klevr_pose_map(traj_path, frame_ids) -> Dict[int, np.ndarray]:
+    return
 
-
-def load_replica_poses(traj_path) -> np.ndarray:
-    poses = np.loadtxt(Path(traj_path))
+def load_klevr_poses(traj_path) -> np.ndarray:
+    with open(Path(traj_path), 'r') as f:
+        poses_json = json.load(f)
+    poses=[]
+    for frame in poses_json["frames"]:
+        poses.append(frame["transform_matrix"])
+    poses=np.array(poses)
     if poses.size == 0:
         raise ValueError(f"Replica trajectory file '{traj_path}' is empty.")
     if poses.size % 16 != 0:
@@ -32,10 +32,9 @@ def load_replica_poses(traj_path) -> np.ndarray:
         )
     return poses.reshape(-1, 4, 4)
 
-
-def build_replica_pose_map(traj_path, frame_ids) -> Dict[int, np.ndarray]:
+def build_klevr_pose_map(traj_path, frame_ids) -> Dict[int, np.ndarray]:
     ordered_frame_ids = sorted(frame_ids)
-    poses = load_replica_poses(traj_path)
+    poses = load_klevr_poses(traj_path)
 
     if not ordered_frame_ids:
         return {}

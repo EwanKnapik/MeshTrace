@@ -581,6 +581,8 @@ class TriangleModel:
     def training_setup(self, training_args):
         if training_args.include_feature:
             vertices_count=self.vertices.shape[0]
+            triangles_count=self._triangle_indices.shape[0]
+            #vertices_count=triangles_count
             if self._instance_feature is None or self._instance_feature.shape[0] != vertices_count:
  
                 instance_feature = torch.randn((vertices_count, training_args.instance_feature_nbr), device="cuda")
@@ -912,6 +914,15 @@ class TriangleModel:
         self.image_size = self.image_size[mask]
         self.importance_score = self.importance_score[mask]
         self.pixel_count = self.pixel_count[mask]
+        
+    def split_triangles(self, mask):
+        # needs a split mask, NOT a keep mask
+        selected_triangles = self._triangle_indices[mask]
+        barycenters = self.vertices[selected_triangles[:, 0]]
+        barycenters = barycenters + self.vertices[selected_triangles[:, 1]]
+        barycenters = barycenters + self.vertices[selected_triangles[:, 2]]
+        barycenters = barycenters * (1.0 / 3.0)
+        
         
 
     def _sample_alives(self, probs, num, alive_indices=None):

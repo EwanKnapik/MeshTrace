@@ -164,7 +164,12 @@ def training(
 
         render_pkg = render(viewpoint_cam, triangles, pipe, bg)
         image = render_pkg["render"]
-
+        #if iteration %1000==0:
+        #    plt.figure()
+        #    plt.imshow(image.permute(1, 2, 0).detach().cpu().numpy())
+        #    plt.axis("off")
+        #    plt.savefig(f"renders_images/base_train_render_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
+        #    plt.close()
         # Loss
         gt_image = viewpoint_cam.original_image.cuda()
         if getattr(viewpoint_cam, "normal_map", None) is not None:
@@ -275,6 +280,7 @@ def training(
             if iteration % 10 == 0:
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
+                    "depth_loss": f"{Ll1depth}",
                 }
                 progress_bar.set_postfix(loss_dict)
                 progress_bar.update(10)
@@ -373,7 +379,6 @@ def training(
     triangles.importance_score = torch.zeros((triangles._triangle_indices.shape[0]), dtype=torch.float, device="cuda")
     while viewpoint_stack:
         viewpoint_cam = viewpoint_stack.pop(0)
-        print(triangles.get_triangle_indices.shape)
         render_pkg = render(viewpoint_cam, triangles, pipe, bg)
 
         importance_score = render_pkg["max_blending"].detach()

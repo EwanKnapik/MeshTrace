@@ -53,11 +53,11 @@ class Scene:
         if os.path.exists(os.path.join(args.source_path, "traj_w_c.txt")):
             print("Found traj_w_c.txt file, assuming semantic Replica data set!")
             scene_info = read_semantic_ReplicaInfo(args.source_path, args.stride, args.sam_folder)
-        elif os.path.exists(os.path.join(args.source_path, "sparse")):
-            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, args.sam_folder)
         elif os.path.exists(os.path.join(args.source_path, "transforms_train.json")):
             print("Found transforms_train.json file, assuming Blender data set!")
             scene_info = sceneLoadTypeCallbacks["Blender"](args.source_path, args.images, args.white_background, args.eval, args.sam_folder)
+        elif os.path.exists(os.path.join(args.source_path, "sparse")):
+            scene_info = sceneLoadTypeCallbacks["Colmap"](args.source_path, args.images, args.eval, args.sam_folder)
         else:
             print(args.source_path)
             assert False, "Could not recognize scene type!"
