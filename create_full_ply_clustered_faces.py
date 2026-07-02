@@ -40,8 +40,8 @@ def segment_scene(path,device,output_name):
 
 
 
-    #labels=perform_dbscan(triangle_instance)
-    labels=perform_kmeans(triangle_instance)
+    labels=perform_dbscan(triangle_instance)
+    #labels=perform_kmeans(triangle_instance)
     
     
     
@@ -61,12 +61,12 @@ def segment_scene(path,device,output_name):
         new_idx=max(idxs)+1
 
     export_dir =os.path.join(segment_dir, f"instance_ply_{new_idx}")
-    os.makedirs(export_dir, exist_ok=True)
+    #os.makedirs(export_dir, exist_ok=True)
 
     for i in tqdm(range(labels.max()+1)):
         print((labels==i).sum(-1))
-        _export_ply_from_state(state_dict, f"{output_name}_{i}.ply", export_dir, labels==i)
-    _export_ply_from_state(state_dict, f"{output_name}_other.ply", export_dir, labels==-1)
+        #_export_ply_from_state(state_dict, f"{output_name}_{i}.ply", export_dir, labels==i)
+    #_export_ply_from_state(state_dict, f"{output_name}_other.ply", export_dir, labels==-1)
     print((labels==-1).sum(-1))
     
 

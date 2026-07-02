@@ -26,7 +26,7 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, depth_params, image, invdepthmap, gt_alpha_mask,
                  image_name, uid,sam_mask=None,
-                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", normal_map=None
+                 trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", normal_map=None, resolution=1.0
                  ):
         super(Camera, self).__init__()
 
@@ -38,6 +38,9 @@ class Camera(nn.Module):
         self.FoVy = FoVy
         self.image_name = image_name
         self.normal_map = normal_map
+
+        # to handle image resize in merge patches and render easily
+        self.resolution = resolution
 
         try:
             self.data_device = torch.device(data_device)

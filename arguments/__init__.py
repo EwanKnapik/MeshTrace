@@ -78,6 +78,7 @@ class PipelineParams(ParamGroup):
         self.compute_cov3D_python = False
         self.depth_ratio = 1.0
         self.debug = False
+        self.rescale_res = 1600
         super().__init__(parser, "Pipeline Parameters")
 
 class OptimizationParams(ParamGroup):

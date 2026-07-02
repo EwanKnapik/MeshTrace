@@ -14,13 +14,13 @@ import os
 
 def perform_dbscan(input_tensor):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
-    clustering = DBSCAN(eps=11, min_samples=1000).fit(input_tensor_df)
+    clustering = DBSCAN(eps=7, min_samples=4000).fit(input_tensor_df)
     return clustering.labels_
     
 
 def perform_kmeans(input_tensor):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
-    clustering = KMeans(n_clusters=20).fit(input_tensor_df)
+    clustering = KMeans(n_clusters=50).fit(input_tensor_df)
     return clustering.labels_
 
 
@@ -40,8 +40,8 @@ def segment_scene(path,device,output_name):
 
 
 
-    labels=perform_dbscan(triangle_instance)
-    #labels=perform_kmeans(triangle_instance)
+    #labels=perform_dbscan(triangle_instance)
+    labels=perform_kmeans(triangle_instance)
     
     
     
@@ -62,6 +62,7 @@ def segment_scene(path,device,output_name):
 
     export_dir =os.path.join(segment_dir, f"instance_ply_{new_idx}")
     os.makedirs(export_dir, exist_ok=True)
+    print(export_dir)
 
     for i in tqdm(range(labels.max()+1)):
         print((labels==i).sum(-1))

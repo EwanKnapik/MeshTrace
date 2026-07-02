@@ -14,6 +14,8 @@ from conf.con_masks_conf import *
 from argparse import ArgumentParser
 from triangle_renderer import render
 from arguments import ModelParams, PipelineParams, get_combined_args
+import torch.nn.functional as F
+
 
 class MaskRepairPipeline:
 
@@ -183,9 +185,9 @@ class MaskRepairPipeline:
             
         return weights
         
-    def repair_masks(self, pipe, background: torch.Tensor, eval, directory, alpha_w:bool=False) -> None:
+    def repair_masks(self, pipe, background: torch.Tensor, dataset, directory, alpha_w:bool=False) -> None:
         sam_paths = sorted(self.dataset_path.glob(f"{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/*.npy"))
-        camera_stack = self._get_camera_stack(eval, directory)
+        camera_stack = self._get_camera_stack(dataset.eval, directory)
         self.train_idx = self.get_train_indices(sam_paths)
         masks = []
         for idx, camera in tqdm(enumerate(camera_stack)):
@@ -197,8 +199,27 @@ class MaskRepairPipeline:
                 sam_data = np.load(f"{self.dataset_path}/{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/{self.sam_name(camera.image_name)}")
             elif self.dataset=='blender':
                 sam_data = np.load(f"{self.dataset_path}/{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/{self.sam_name(camera.image_name)}")
-            sam_tensor = torch.from_numpy(sam_data).cuda().squeeze()
-            sam_tensor = sam_tensor[sam_tensor.sum((-2, -1)) > 96].squeeze()
+            sam_tensor = torch.from_numpy(sam_data).cuda().squeeze().unsqueeze(0)
+
+            print(sam_tensor.shape[2:])
+            orig_h,orig_w = sam_tensor.shape[2:]
+
+            if camera.resolution in [1, 2, 4, 8]:
+                resolution = round(orig_w/(camera.resolution)), round(orig_h/(camera.resolution))
+            else:  # should be a type that converts to float
+                if camera.resolution == -1:
+                    if orig_w > pipe.rescale_res:
+                        global_down = orig_w / pipe.rescale_res
+                    else:
+                        global_down = 1
+                else:
+                    global_down = orig_w / camera.resolution
+
+                scale = float(global_down)
+                resolution = (int(orig_w / scale), int(orig_h / scale))
+            
+            sam_tensor=F.interpolate(sam_tensor.float(),size=resolution[::-1]).squeeze()>0.5
+
             mask = SegmentationMask(sam_tensor, view=idx, image_name= camera.image_name)
             # mask.pre_process(sam_tensor, 0.001)
             masks.append(mask)
@@ -303,13 +324,12 @@ def main():
         dataset_path = source_path if directory == "images" and (source_path / DEFAULT_SAM_FOLDER / ORIGIN_FOLDER).is_dir() else source_path / directory
         pipeline = MaskRepairPipeline(str(dataset_path), scene, triangles, args.large_scene, dataset)
         if args.large_scene:
-
             if args.precomp_id_map:
                 pipeline.pre_compute_id_maps(dataset, pipe, background)
             else:
-                pipeline.repair_masks(pipe, background, dataset.eval, directory, args.alpha_w)
+                pipeline.repair_masks(pipe, background, dataset, directory, args.alpha_w)
         else:
-            pipeline.repair_masks(pipe, background, dataset.eval, directory, args.alpha_w)
+            pipeline.repair_masks(pipe, background, dataset, directory, args.alpha_w)
 
 
 if __name__ == "__main__":

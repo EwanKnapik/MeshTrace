@@ -32,6 +32,7 @@ from scene.triangle_model import TriangleModel
 from utils.sh_utils import eval_sh
 from utils.point_utils import depth_to_normal
 import torch.nn.functional as F
+from scene.cameras import Camera
 
 def normals_world_to_view(view, normal_world):
     # normal_world: [H,W,3]
@@ -107,7 +108,7 @@ def compute_image_2d_pytorch_exact(vertices, projmatrix, W, H):
     return image_2D_pytorch
 
 
-def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
+def render(viewpoint_camera: Camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, scaling_modifier = 1.0, override_color = None):
     """
     Render the scene. 
     
@@ -142,9 +143,26 @@ def render(viewpoint_camera, pc : TriangleModel, pipe, bg_color : torch.Tensor, 
     H = upsample * H_init
     W = upsample * W_init
 
+    # added to downscale render if input pictures have been rescaled
+    # code come from camera_utils.loadCam 
+    if viewpoint_camera.resolution in [1, 2, 4, 8]:
+        resolution = round(W/(viewpoint_camera.resolution)), round(H/(viewpoint_camera.resolution))
+    else:  # should be a type that converts to float
+        if viewpoint_camera.resolution == -1:
+            if W > pipe.rescale_res:
+                global_down = W / pipe.rescale_res
+            else:
+                global_down = 1
+        else:
+            global_down = W / viewpoint_camera.resolution
+
+        scale = float(global_down)
+        resolution = (int(W / scale), int(H / scale))
+
+
     raster_settings = TriangleRasterizationSettings(
-        image_height=H,
-        image_width=W,
+        image_height=resolution[1],
+        image_width=resolution[0],
         tanfovx=tanfovx,
         tanfovy=tanfovy,
         bg=bg_color,
