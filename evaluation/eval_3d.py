@@ -7,20 +7,20 @@ from utils.metric_utils import labels_and_depths, get_ref_view,get_view_ids, get
 from utils.merge_query import get_query_pairs, get_pred, cal_ious, cal_accs
 from utils.image_utils import psnr
 from utils.render_utils import save_img_u8
-from arguments import ModelParams, PipelineParams, get_combined_args
+from arguments import ModelParams, PipelineParams, get_combined_args, OptimizationParams
 from argparse import ArgumentParser
-from gaussian_renderer.trace import trace
-from gaussian_renderer.render_feature import render
-from scene import Scene, GaussianModel
+from triangle_renderer.trace_triangle import trace
+from triangle_renderer.render_feature import render
+from scene import Scene, TriangleModel
 import torch
 import json
 import shutil
 import numpy as np
 from tqdm import tqdm
 
-def feature_map(viewpoint_cam, gaussians, pipe, background):
+def feature_map(viewpoint_cam, triangles, pipe, background):
     with torch.no_grad():
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, include_feature=True)
+        render_pkg = render(viewpoint_cam, triangles, pipe, background, include_feature=True)
         render_features = render_pkg["instance_image"].permute(1, 2, 0)
     return render_features
 
@@ -45,9 +45,9 @@ def cal_bbox_psnr(img, gt_img, gt_mask, pad=10):
     ps = psnr(img[:, (bbox_mask == 1)], test_gt[:, (bbox_mask == 1)]).mean()
     return ps
 
-def test_object(gaussians, gaus_mask, id, test_viewpoints, background, pipe, object_path, background_path):
+def test_object(triangles, tris_mask, id, test_viewpoints, background, pipe, object_path, background_path):
     miou, mps, accs = [], [], []
-    object, left = get_obj_by_mask(gaussians, gaus_mask), get_obj_by_mask(gaussians, ~gaus_mask)
+    object, left = get_obj_by_mask(triangles, tris_mask), get_obj_by_mask(triangles, ~tris_mask)
     save_mark = 0
     for idx, viewpoint in enumerate(test_viewpoints):
         gt_img = viewpoint.original_image.clone()
@@ -95,6 +95,7 @@ if __name__ == "__main__":
     parser = ArgumentParser(description="Testing script parameters")
     model = ModelParams(parser, sentinel=True)
     pipeline = PipelineParams(parser)
+    op = OptimizationParams(parser)
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--start_checkpoint", default=None, type=str)
     parser.add_argument("--alpha_w", action="store_true", help="True for alpha_w")
@@ -102,7 +103,7 @@ if __name__ == "__main__":
     parser.add_argument('--result_save_path', type=str, default=None,help="Path to save result json")
     parser.add_argument('--method', type=str, default=None)
     parser.add_argument('--clean_history', action="store_true")
-    parser.add_argument("--save_gaus_mask", action="store_true")
+    parser.add_argument("--save_tris_mask", action="store_true")
     args = get_combined_args(parser)
     assert args.save_path != None
     assert args.result_save_path != None
@@ -113,23 +114,23 @@ if __name__ == "__main__":
         print("---------------------------------------------------------\n")
     alpha_w = args.alpha_w
     model_name = os.path.basename(args.model_path)
-    dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
-    gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, shuffle=False)
+    dataset, iteration, pipe, opt = model.extract(args), args.iteration, pipeline.extract(args), op.extract(args)
+    triangles = TriangleModel(dataset.sh_degree)
+    scene = Scene(dataset, triangles, shuffle=False, init_opacity=None, set_sigma=None)
     checkpoint = args.start_checkpoint
     if checkpoint:
-        (model_params, first_iter) = torch.load(checkpoint)
-        gaussians.restore(model_params, mode='render')
+        model_params = torch.load(checkpoint)
+        triangles.restore(model_params,opt)
     else:
         raise ValueError("checkpoint missing!")
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
     train_dir = os.path.join(args.model_path, 'train', "ours_{}".format(scene.loaded_iter))
-    scene_name = os.path.basename(dataset.source_path)
+    scene_name = os.path.basename(dataset.source_path[:-11])
     # --------------------------------------------------------------------------------------------- init
     ids = torch.tensor({
-        "office_0_1": [3, 4, 7, 9, 11, 12, 14, 15, 16, 17, 19, 21, 22, 23, 29, 30, 32, 34, 35, 36, 37, 40, 44, 48, 49, 57, 58, 61, 66],
+        "office_0": [3, 4, 7, 9, 11, 12, 14, 15, 16, 17, 19, 21, 22, 23, 29, 30, 32, 34, 35, 36, 37, 40, 44, 48, 49, 57, 58, 61, 66],
         "office_1": [3, 8, 9, 11, 12, 13, 14, 17, 23, 24, 29, 30, 31, 32, 34, 35, 37, 43, 45,],
         "office_2": [0, 2, 3, 4, 6, 8, 9, 12, 13, 14, 17, 23, 27, 34, 38, 39, 46, 49, 51, 54, 57, 58, 59, 63, 65, 68, 69, 70, 72, 73, 74, 75, 77, 78, 80, 84, 85, 86, 90, 92, 93],
         "office_3": [1, 2, 8, 11, 12, 15, 18, 21, 22, 25, 29, 32, 33, 42, 51, 54, 55, 56, 60, 61, 70, 82, 85, 86, 88, 86, 97, 101, 102, 103, 110, 111,],
@@ -164,12 +165,12 @@ if __name__ == "__main__":
 
     sams = []
     for viewpoint in viewpoints:
-        sams.append(feature_map(viewpoint, gaussians, pipe, background).to('cpu'))
+        sams.append(feature_map(viewpoint, triangles, pipe, background).to('cpu'))
     sams = torch.stack(sams)
 
     test_sams = []
     for viewpoint in test_viewpoints:
-        test_sams.append(feature_map(viewpoint, gaussians, pipe, background).to('cpu'))
+        test_sams.append(feature_map(viewpoint, triangles, pipe, background).to('cpu'))
     test_sams = torch.stack(test_sams)
 
     # ---------------------------------------------------------------load occ views
@@ -272,14 +273,12 @@ if __name__ == "__main__":
             miou_2d = torch.tensor(mask_iou_2d).mean().cpu().numpy()
             macc_2d = torch.tensor(mask_acc_2d).mean().cpu().numpy()
     # --------------------------------------------------------------------------------------trace objects
-            weights = []
+            weights = torch.zeros(triangles.get_triangle_indices.shape[0],masks[0].max().item()+1)
             for idx, viewpoint in enumerate(viewpoints):
-                w = trace(viewpoint, gaussians, masks[idx], 1, pipe, background, alpha_w)  # [P,2]
-                weights.append(w)
-            weights = torch.stack(weights)
-            weights = weights.sum(0)  # [view,P,2]->[P,2]
+                w = trace(viewpoint, triangles, masks[idx], pipe, background, alpha_w)  # [P,2]
+                weights+=w
 
-            gaus_mask = weights[:, 1]/weights.sum(1).clamp(1e-9) > trace_th
+            tris_mask = weights[:, 1]/weights.sum(1).clamp(1e-9) > trace_th
     # --------------------------------------------------------------------------------------filter occ views
             if curr_test_views is not None:
                 tmp_test_viewpoints = [view for view in test_viewpoints if int(
@@ -287,13 +286,12 @@ if __name__ == "__main__":
             else:
                 tmp_test_viewpoints = test_viewpoints.copy()
     # --------------------------------------------------------------------------------------save gaus mask
-            gaus_mask_path = os.path.join(scene.model_path, "objects")
-            if args.save_gaus_mask:
-                os.makedirs(gaus_mask_path, exist_ok=True)
-                torch.save(gaus_mask, os.path.join(gaus_mask_path, f"{ref_id}_gaus_mask.pt"))
-
+            tris_mask_path = os.path.join(scene.model_path, "objects")
+            if args.save_tris_mask:
+                os.makedirs(tris_mask_path, exist_ok=True)
+                torch.save(tris_mask, os.path.join(tris_mask_path, f"{ref_id}_tris_mask.pt"))
     # --------------------------------------------------------------------------------------test objects
-            miou, macc, mps = test_object(gaussians, gaus_mask, ref_id, tmp_test_viewpoints,
+            miou, macc, mps = test_object(triangles, tris_mask, ref_id, tmp_test_viewpoints,
                                           background, pipe, object_path, background_path=background_path)
     # ---------------------------------------------------------------------------------------save results
             final_metrics["miou_3d"].append(miou)

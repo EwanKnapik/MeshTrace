@@ -7,6 +7,7 @@ import cv2
 import numpy as np
 from joblib import Parallel, delayed
 import tifffile
+from glob import glob
 
 from read_write_model import qvec2rotmat, read_model
 
@@ -19,6 +20,11 @@ except ModuleNotFoundError:
     from replica_utils import build_replica_pose_map, discover_replica_rgb_frames
     from klevr_utils import build_klevr_pose_map, discover_klevr_train_frames
 
+def glob_data(data_dir):
+    data_paths = []
+    data_paths.extend(glob(data_dir))
+    data_paths = sorted(data_paths)
+    return data_paths
 
 def robust_scale_and_offset(reference_values, predicted_values):
     if reference_values.size <= 10:
@@ -37,6 +43,25 @@ def robust_scale_and_offset(reference_values, predicted_values):
     offset = reference_median - predicted_median * scale
     return float(scale), float(offset)
 
+def get_replica_scales(key, depth_gt_path, mono_depth_path):
+    image_name = Path(mono_depth_path).stem
+
+    gt_depth = load_depth_image(Path(depth_gt_path))
+    inv_mono_depth = load_depth_image(Path(mono_depth_path))
+    valid_depth = gt_depth > 1e-6
+
+    inv_gt_depth = 0.01 / gt_depth[valid_depth]
+    inv_mono_depth=inv_mono_depth[valid_depth]
+
+    if inv_mono_depth is None:
+        return None
+
+    if inv_mono_depth.shape[0] != inv_gt_depth.shape[0]:
+        print("mismatch in depth map size")
+        return None
+
+    scale, offset = robust_scale_and_offset(inv_gt_depth, inv_mono_depth)
+    return {"image_name": image_name, "scale": scale, "offset": offset}
 
 def get_colmap_scales(key, cameras, images, points3d_ordered, depths_dir):
     image_meta = images[key]
@@ -140,10 +165,19 @@ if __name__ == "__main__":
             for key in images_metas
         )
     elif dataset_type == "replica":
-        return
+        gt_depth_path = glob_data(os.path.join(args.depths_dir , f"depth_*.png"))
+        mono_depth_path = glob_data(os.path.join(args.depths_dir , f"rgb_*.png"))
+        depth_param_list = Parallel(n_jobs=-1, backend="threading")(
+            delayed(get_replica_scales)(
+                key,
+                gt_depth_path[key],
+                mono_depth_path[key]
+            )
+            for key in range(len(gt_depth_path))
+        )
 
     elif dataset_type == "klevr":
-        return
+        print("klevr dataset")
 
     depth_params = {
         depth_param["image_name"]: {

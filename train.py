@@ -54,7 +54,9 @@ try:
 except:
     SPARSE_ADAM_AVAILABLE = False
 from utils.render_utils import generate_path, create_videos
+from utils.make_depth_scale import detect_dataset_type
 
+import random
 
 
 def training(
@@ -65,6 +67,7 @@ def training(
         checkpoint, 
         debug_from,
         scene_name,
+        save_iterations,
         use_sparse_adam=False
         ):
     
@@ -74,12 +77,13 @@ def training(
     # Load parameters, triangles and scene
     triangles = TriangleModel(dataset.sh_degree)
 
-    scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma)
+    scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma,checkpoint)
+    random.seed()
 
     triangles.training_setup(opt)
     triangles.add_percentage = opt.add_percentage
 
-
+    dataset_type=detect_dataset_type(dataset.source_dir)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         triangles.restore(model_params, opt)
@@ -241,14 +245,26 @@ def training(
         Ll1depth_pure = 0.0
         if depth_l1_weight(iteration) > 0 and getattr(viewpoint_cam, "invdepthmap", None) is not None:
             invDepth = 1.0 / (render_pkg["expected_depth"] + 1e-6)
-            mono_invdepth = viewpoint_cam.invdepthmap.cuda()
+            mono_invdepth = 1/viewpoint_cam.gt_depth.cuda() if dataset_type=="replica" else 1/viewpoint_cam.invdepthmap.cuda()
             depth_mask = viewpoint_cam.depth_mask.cuda()
             Ll1depth_pure = torch.abs((invDepth  - mono_invdepth) * depth_mask).mean()
             Ll1depth = depth_l1_weight(iteration) * Ll1depth_pure 
             loss += Ll1depth
+            if iteration %1000==0:
+                plt.figure()
+                plt.subplot(1, 2, 1)
+                plt.imshow(invDepth.squeeze().cpu().detach().numpy(),vmin=0,vmax=2.5)
+                plt.axis("off")
+                plt.subplot(1, 2, 2)
+                plt.imshow(mono_invdepth.squeeze().cpu().detach().numpy(),vmin=0,vmax=2.5)
+                plt.axis("off")
+                #plt.subplot(1, 2, 3)
+                #plt.imshow(viewpoint_cam.original_image.permute(1, 2, 0).cpu().numpy())
+                #plt.axis("off")
+                plt.savefig(f"train_debug/depth_map_debug_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
+                plt.close()
         else:
             Ll1depth = 0
-
         rend_normal = render_pkg['rend_normal']
         surf_normal = render_pkg['surf_normal']
 
@@ -281,6 +297,7 @@ def training(
                 loss_dict = {
                     "Loss": f"{ema_loss_for_log:.{5}f}",
                     "depth_loss": f"{Ll1depth}",
+                    "triangles": f"{triangles.get_triangle_indices.shape[0]}",
                 }
                 progress_bar.set_postfix(loss_dict)
                 progress_bar.update(10)
@@ -374,6 +391,11 @@ def training(
                 triangles.optimizer.step()
                 triangles.optimizer.zero_grad(set_to_none = True)
 
+
+            if (iteration in save_iterations):
+                scene.save(f"new_{iteration}")          
+                print("\n[ITER {}] Saving Checkpoint".format(iteration))
+
     # cleaning of triangles that we do not need
     viewpoint_stack = scene.getTrainCameras().copy()
     triangles.importance_score = torch.zeros((triangles._triangle_indices.shape[0]), dtype=torch.float, device="cuda")
@@ -399,7 +421,7 @@ def training(
     vertex_mask = used_vertex_mask
     triangles._prune_vertices(vertex_mask)
 
-    scene.save(iteration)          
+    scene.save(f"depth_{iteration}")          
     print("Training is done")
 
 def prepare_output_and_logger(args):    
@@ -525,6 +547,7 @@ if __name__ == "__main__":
              args.start_checkpoint,
              args.debug_from,
              args.scene_name,
+             args.save_iterations,
              use_sparse_adam=args.use_sparse_adam
              )
     

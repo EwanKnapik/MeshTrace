@@ -111,7 +111,7 @@ def loadCam(args, id, cam_info, resolution_scale):
     return Camera(colmap_id=cam_info.uid, R=cam_info.R, T=cam_info.T, 
                   FoVx=cam_info.FovX, FoVy=cam_info.FovY,  depth_params=cam_info.depth_params, invdepthmap=invdepthmap,
                   image=gt_image, gt_alpha_mask=loaded_mask,
-                  image_name=cam_info.image_name, uid=id,sam_mask=cam_info.sam_mask, data_device=args.data_device, normal_map=normal_map,
+                  image_name=cam_info.image_name, uid=id, instance_image=cam_info.instance_image ,sam_mask=cam_info.sam_mask, depth=cam_info.depth, data_device=args.data_device, normal_map=normal_map,
                   # added for resolution correspondance between cam and render
                   resolution=args.resolution)
 

@@ -4,19 +4,19 @@ ROOT_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
 if ROOT_DIR not in sys.path:
     sys.path.insert(0, ROOT_DIR)
 from utils.merge_query import get_query_pairs, get_pred, cal_accs, cal_ious
-from utils.metric_utils import labels_and_depths, get_ref_view, get_view_ids, overlay_prediction, ex_ref_view
+from utils.metric_utils import labels_and_depths, get_ref_view, get_view_ids, overlay_prediction, ex_ref_view_fc
 from datetime import datetime
 from utils.render_utils import save_img_u8
-from arguments import ModelParams, PipelineParams, get_combined_args
+from arguments import ModelParams, PipelineParams, get_combined_args, OptimizationParams
 from argparse import ArgumentParser
-from scene import Scene, GaussianModel
-from gaussian_renderer.render_feature import render
+from scene import Scene, TriangleModel
+from triangle_renderer.render_feature import render
 import numpy as np
 from tqdm import tqdm
 import torch
 
 test_ids = {
-    'office_0_1': [3, 4, 7, 8, 9, 10, 12, 14, 17, 19, 21, 23, 26, 28, 29, 30, 36, 37, 40, 42, 44, 46, 54, 55, 57, 58, 61],
+    'office_0': [3, 4, 7, 8, 9, 10, 12, 14, 17, 19, 21, 23, 26, 28, 29, 30, 36, 37, 40, 42, 44, 46, 54, 55, 57, 58, 61],
     'office_1': [3, 7, 9, 11, 13, 14, 15, 17, 23, 24, 29, 32, 33, 36, 37, 39, 42, 44, 45, 46],
     'office_2': [2, 8, 9, 13, 14, 17, 19, 23, 27, 40, 41, 47, 49, 51, 54, 58, 60, 65, 67, 70, 71, 72, 73, 78, 85, 90, 92, 93],
     'office_3': [3, 8, 11, 14, 15, 18, 19, 25, 29, 30, 32, 33, 38, 39, 43, 51, 54, 55, 61, 65, 72, 76, 78, 82, 87, 91, 95, 96, 101, 111],
@@ -26,15 +26,16 @@ test_ids = {
     'room_2': [3, 5, 6, 7, 8, 9, 11, 12, 16, 18, 22, 26, 27, 37, 38, 39, 40, 43, 49, 55, 56]
 }
 
-def feature_map(viewpoint_cam, gaussians, pipe, background):
+def feature_map(viewpoint_cam, triangles, pipe, background):
     with torch.no_grad():
-        render_pkg = render(viewpoint_cam, gaussians, pipe, background, include_feature=True)
+        render_pkg = render(viewpoint_cam, triangles, pipe, background, include_feature=True)
         render_features = render_pkg["instance_image"].permute(1, 2, 0)
     return render_features
 
 if __name__ == "__main__":
     parser = ArgumentParser(description="Testing script parameters")
     model = ModelParams(parser, sentinel=True)
+    op = OptimizationParams(parser)
     pipeline = PipelineParams(parser)
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--iter", default=30000, type=int)
@@ -44,17 +45,17 @@ if __name__ == "__main__":
     args = get_combined_args(parser)
     assert args.save_path != None
 
-    dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
-    gaussians = GaussianModel(dataset.sh_degree)
-    scene = Scene(dataset, gaussians, shuffle=False)
+    dataset, iteration, pipe, opt = model.extract(args), args.iteration, pipeline.extract(args), op.extract(args)
+    triangles = TriangleModel(dataset.sh_degree)
+    scene = Scene(dataset, triangles, shuffle=False, init_opacity=None, set_sigma=None)
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
 
-    (model_params, first_iter) = torch.load(args.start_checkpoint)
-    gaussians.restore(model_params, mode='render')
+    model_params = torch.load(args.start_checkpoint)
+    triangles.restore(model_params, opt)
     method = dataset.sam_folder
 
-    scene_name = os.path.basename(dataset.source_path)
+    scene_name = os.path.basename(dataset.source_path[:-11])
     train_viewpoints = scene.getTrainCameras().copy()
     test_viewpoints = scene.getTestCameras().copy()
 
@@ -90,7 +91,7 @@ if __name__ == "__main__":
 
     sams = []
     for viewpoint in all_viewpoints:
-        sams.append(feature_map(viewpoint, gaussians, pipe, background).to('cpu'))
+        sams.append(feature_map(viewpoint, triangles, pipe, background).to('cpu'))
     sams = torch.stack(sams)
     view_ids = get_view_ids(all_viewpoints)
     distance_type = 'euclidean'
@@ -107,7 +108,7 @@ if __name__ == "__main__":
         probab = 1
 
         ref_view, all_views = get_ref_view(labels, depths, ref_id)
-        ex_ref_view = ex_ref_view(scene_name, ref_id)
+        ex_ref_view = ex_ref_view_fc(scene_name, ref_id)
 
         if ex_ref_view is not None:
             ex_ref_view_id = view_ids.index(ex_ref_view)

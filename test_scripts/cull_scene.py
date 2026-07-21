@@ -99,7 +99,7 @@ def main():
     viewpoint_cam = camera_stack.pop(77)
     distance_cull_scene(3,triangles, viewpoint_cam,pipe,background) 
     save_name="culled"
-    scene.save(f"{culled}_{args.iteration}")          
+    scene.save(f"{save_name}_{args.iteration}")          
 
 if __name__ == "__main__":
     main()

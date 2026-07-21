@@ -1,0 +1,19 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/Depth-Anything-V2/
+#SBATCH --partition=rtxpro
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+
+
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/office_0/Sequence_1/rgb --outdir ~/input/REPLICA/office_0/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/office_1/Sequence_1/rgb --outdir ~/input/REPLICA/office_1/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/office_2/Sequence_1/rgb --outdir ~/input/REPLICA/office_2/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/office_3/Sequence_1/rgb --outdir ~/input/REPLICA/office_3/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/office_4/Sequence_1/rgb --outdir ~/input/REPLICA/office_4/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/room_0/Sequence_1/rgb --outdir ~/input/REPLICA/room_0/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/room_1/Sequence_1/rgb --outdir ~/input/REPLICA/room_1/Sequence_1/depth
+python run.py --encoder vitl --pred-only --grayscale --img-path ~/input/REPLICA/room_2/Sequence_1/rgb --outdir ~/input/REPLICA/room_2/Sequence_1/depth

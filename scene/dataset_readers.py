@@ -169,6 +169,8 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
         # figure out the key without extension, e.g. "00012"
         n_remove = len(extr.name.split('.')[-1]) + 1
         key_no_ext = extr.name[:-n_remove]
+        idx=key_no_ext.split('_')[-1].lstrip('0')
+        idx=int(idx) if idx!="" else 0
 
         # grab per-view depth params (now guaranteed to have med_scale)
         depth_params = None
@@ -196,7 +198,9 @@ def readColmapCameras(cam_extrinsics, cam_intrinsics, depths_params, images_fold
 
 
         if (sam_paths is not None ):
-            sam_mask=np.load(sam_paths[sam_i])
+            #sam_mask=np.load(sam_paths[idx])
+            sam_mask=np.load(os.path.join(dataset , "sam" ,sam_folder,f"{str(key_no_ext)}.npy"))
+            #print(f"\n sam mask name :{os.path.join(dataset , 'sam' ,sam_folder,f'{str(key_no_ext)}.npy')}, camera idx :{idx}\n")
             sam_i+=1
             id_masks=torch.from_numpy(sam_mask).cuda()
             id_list=torch.unique(id_masks,sorted=True).cuda()
@@ -254,6 +258,7 @@ def storePly(path, xyz, rgb):
     # Create the PlyData object and write to file
     vertex_element = PlyElement.describe(elements, 'vertex')
     ply_data = PlyData([vertex_element])
+    os.makedirs(os.path.dirname(path),exist_ok=True)
     ply_data.write(path)
 
 def readColmapSceneInfo(path, images, eval,sam_folder, llffhold=8, aug=False):

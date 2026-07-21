@@ -32,7 +32,7 @@ class Scene:
 
     triangles : TriangleModel
 
-    def __init__(self, args : ModelParams, triangles : TriangleModel, init_opacity, set_sigma, load_iteration=None, shuffle=True, resolution_scales=[1.0], segment=False, ratio_threshold=0.75):
+    def __init__(self, args : ModelParams, triangles : TriangleModel, init_opacity, set_sigma, load_iteration=-1, shuffle=True, resolution_scales=[1.0], segment=False, ratio_threshold=0.75):
         """b
         :param path: Path to colmap scene main folder.
         """

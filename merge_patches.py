@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import os
 from utils.con_mask_utils import SegmentationMask
 from utils.render_utils import save_img_u8
-from triangle_renderer.trace_triangle import trace
+from triangle_renderer.trace_triangle import trace, compressed_trace
 from scene import Scene
 from scene.triangle_model import TriangleModel
 from conf.con_masks_conf import *  
@@ -101,7 +101,7 @@ class MaskRepairPipeline:
         if normalized_directory == "test":
             return self.camera_test_stack
         if normalized_directory in {"images", "rgb"}:
-            return self.camera_train_stack
+            return self.camera_images_stack
 
         raise ValueError(f"Unsupported image directory '{directory}' for mask repair")
     
@@ -170,7 +170,15 @@ class MaskRepairPipeline:
                         pipe
                     )
                 else:
-                    w = trace(
+                    #w = trace(
+                    #    view,
+                    #    self.triangles,
+                    #    p_mask,
+                    #    pipe,
+                    #    background,
+                    #    alpha_w,
+                    #)
+                    w = compressed_trace(
                         view,
                         self.triangles,
                         p_mask,
@@ -178,9 +186,6 @@ class MaskRepairPipeline:
                         background,
                         alpha_w,
                     )
-                unseen = (w.sum(-1) == 0)
-                w = torch.argmax(w, dim=-1)
-                w[unseen] = UNSEEN_VALUE
                 weights[:, idx] = w
             
         return weights
@@ -197,11 +202,11 @@ class MaskRepairPipeline:
                 sam_data = np.load(sam_paths[self.train_idx[idx]])
             elif self.dataset=='colmap':
                 sam_data = np.load(f"{self.dataset_path}/{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/{self.sam_name(camera.image_name)}")
+                print(f"{self.dataset_path}/{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/{self.sam_name(camera.image_name)}")
             elif self.dataset=='blender':
                 sam_data = np.load(f"{self.dataset_path}/{DEFAULT_SAM_FOLDER}/{ORIGIN_FOLDER}/{self.sam_name(camera.image_name)}")
             sam_tensor = torch.from_numpy(sam_data).cuda().squeeze().unsqueeze(0)
 
-            print(sam_tensor.shape[2:])
             orig_h,orig_w = sam_tensor.shape[2:]
 
             if camera.resolution in [1, 2, 4, 8]:
@@ -224,7 +229,7 @@ class MaskRepairPipeline:
             # mask.pre_process(sam_tensor, 0.001)
             masks.append(mask)
 
-        for iteration in range(4):
+        for iteration in range(2):
             self._repair_iteration(masks, iteration,pipe,background, camera_stack)
 
     def _repair_iteration(self, 
@@ -288,19 +293,23 @@ def main():
     pipeline = PipelineParams(parser)
 
     parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--start_checkpoint", type=str, default="")
     parser.add_argument("--skip_pre", action="store_false")
     parser.add_argument("--include_feature", action="store_false")
     parser.add_argument("--interval", type=int, default=-1)
     parser.add_argument("--alpha_w", action="store_true")
     parser.add_argument("--large_scene", default=False)
     parser.add_argument("--precomp_id_map", default=False)
+    parser.add_argument("--start_checkpoint", type=str, default=None)
     args = get_combined_args(parser)
+    print(args._get_args)
 
     dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
     triangles = TriangleModel(dataset.sh_degree)
     dataset.sam_folder = "empty" #prevent sam loading
-    scene = Scene(dataset, triangles, init_opacity=None, set_sigma=None, shuffle=False, load_iteration=-1)
+    if args.start_checkpoint:
+        scene = Scene(dataset, triangles, init_opacity=None, set_sigma=None, shuffle=False, load_iteration=args.start_checkpoint)
+    else:
+        scene = Scene(dataset, triangles, init_opacity=None, set_sigma=None, shuffle=False, load_iteration=-1)
 
     bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
     background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")

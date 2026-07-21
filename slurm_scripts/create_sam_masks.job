@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtx30
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_1/Sequence_1/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_2/Sequence_1/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_3/Sequence_1/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_4/Sequence_1/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/room_1/Sequence_1/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/room_2/Sequence_1/

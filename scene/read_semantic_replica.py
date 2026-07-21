@@ -10,6 +10,7 @@ import os
 from utils.graphics_utils import focal2fov
 import cv2
 import numpy as np
+from glob import glob
 from pathlib import Path
 
 from utils.sh_utils import SH2RGB
@@ -30,6 +31,11 @@ from scene.dataset_readers import (
 )
 from utils.replica_utils import build_replica_pose_map, discover_replica_rgb_frames
 
+def glob_data(data_dir):
+    data_paths = []
+    data_paths.extend(glob(data_dir))
+    data_paths = sorted(data_paths)
+    return data_paths
 
 def get_replica_semantic_intrisic(img_h:int = 480, img_w:int = 640):
     # replica dataset from semantic nerf used a fixed fov
@@ -42,88 +48,94 @@ def get_replica_semantic_intrisic(img_h:int = 480, img_w:int = 640):
     return fx, fy, cx, cy
 
 
-def find_replica_mono_depth_dir(input_folder: Path):
-    for directory_name in ("depth_DA", "depth_any", "depth_anything", "depth_pred", "mono_depth"):
-        candidate = input_folder / directory_name
-        if candidate.is_dir():
-            return candidate
-    return None
 
 
 def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folder='origin'):
     input_folder = Path(input_folder)
     scene_name = os.path.basename(input_folder)
     traj_path = input_folder / "traj_w_c.txt"
-    rgb_frames = discover_replica_rgb_frames(input_folder)
 
-    assert len(rgb_frames) > 0, "No RGB images found at {}".format(str(input_folder / "rgb" / "rgb_*.png"))
+    rgb_paths = glob(str(input_folder / "rgb" / "rgb*.png"))
+    depth_paths = glob_data(os.path.join(input_folder , "depth" , "depth*.png"))
+    sam_paths = glob_data(os.path.join(input_folder , DEFAULT_SAM_FOLDER  ,sam_folder ,"*.npy"))
+    depths_folder = os.path.join(input_folder, "depth")
+
+    assert len(rgb_paths) > 0, "No RGB images found at {}".format(str(input_folder / "results" / "frame*.jpg"))
+    assert len(rgb_paths) == len(depth_paths), "Number of RGB and depth images must match"
     assert os.path.exists(traj_path), "Could not find camera trajectory at {}".format(traj_path)
 
-    frame_ids = [frame_id for frame_id, _ in rgb_frames]
-    pose_map = build_replica_pose_map(traj_path, frame_ids)
-    depth_params = load_depth_params(input_folder / "sparse/0/depth_params.json")
-    mono_depth_dir = find_replica_mono_depth_dir(input_folder)
+    # Load the poses
+    poses = np.loadtxt(traj_path, delimiter=" ").reshape(-1, 4, 4)
+    assert len(poses) == len(rgb_paths), f"Number of poses ({len(poses)}) and number of images ({len(rgb_paths)}) must match"
 
-    first_image = Image.open(rgb_frames[0][1])
-    img_w, img_h = first_image.size
+    # Load the intrinsics
+    img_h, img_w = 480, 640
     fx, fy, cx, cy = get_replica_semantic_intrisic(img_h, img_w)
     fovx = focal2fov(fx, img_w)
     fovy = focal2fov(fy, img_h)
     transf = transforms.ToTensor()
 
+    depths_params = load_depth_params(input_folder / "sparse/0/depth_params.json")
+
     train_camera_infos = []
     test_camera_infos = []
 
-    selected_frames = rgb_frames[::image_stride]
-    test_positions = set(range(0, len(selected_frames), 4))
-    train_frame_ids = {
-        frame_id for position, (frame_id, _) in enumerate(selected_frames) if position not in test_positions
-    }
-    test_frame_ids = {
-        frame_id for position, (frame_id, _) in enumerate(selected_frames) if position in test_positions
-    }
-
-    reject_view = set()
+    # Split the train/valid sets according to Egolifter
+    all_idx = np.arange(0, 900,image_stride)
+    test_idx = np.arange(0, len(all_idx), 4) # 25% of the images are used for validation
+    train_idx = np.setdiff1d(all_idx, all_idx[test_idx])
+    reject_view = []  
+    # from omniseg3D  
     if scene_name == 'office_1':
-        reject_view = set(range(474, 504))
+        reject_view = np.arange(474, 504)
         print(f"Rejecting views for office_1: {reject_view}")
     elif scene_name == 'office_4':
-        reject_view = set(range(618, 734))
+        reject_view = np.arange(618, 734)
         print(f"Rejecting views for office_4: {reject_view}")
 
-    for frame_id, rgb_path in selected_frames:
-        if frame_id in reject_view:
+    for idx in np.arange(0,900, image_stride):
+        if idx in reject_view:
             continue
-
-        gt_seg_path = input_folder / "semantic_instance" / f"semantic_instance_{frame_id}.png"
+        rgb_path = os.path.join(input_folder , "rgb" , f"rgb_{idx}.png")
+        gt_seg_path= os.path.join(input_folder , "semantic_instance",f"semantic_instance_{idx}.png")
         image = Image.open(rgb_path)
-        image_name = rgb_path.stem
-
-        gt_depth_path = input_folder / "depth" / f"depth_{frame_id}.png"
-        depth = None
-        if gt_depth_path.exists():
-            depth = transf(Image.open(gt_depth_path)) / 1000.0
-
-        pose = pose_map[frame_id]
+        image_name=rgb_path.split("/")[-1].split(".")[0]
+        depth_path =os.path.join(input_folder , "depth" , f"depth_{idx}.png")# depth_paths[idx],gt depth
+        depth = Image.open(depth_path)
+        depth = (transf(depth)/1000)
+        pose = poses[idx]
+        
         id_masks = None
         sam_features = None
-
-        sam_path = input_folder / DEFAULT_SAM_FOLDER / sam_folder / f"rgb_{frame_id}.npy"
-        if frame_id in train_frame_ids and sam_path.exists():
-            sam_mask = np.load(sam_path)
+        if len(sam_paths) > 0 and (idx in train_idx):
+            sam_mask = np.load(os.path.join(input_folder, DEFAULT_SAM_FOLDER, sam_folder,"rgb_{}.npy".format(idx)))
             if len(sam_mask.shape) == 3:
                 N, H, W = sam_mask.shape
-                sam_mask = torch.from_numpy(sam_mask)
+                sam_mask = torch.from_numpy(sam_mask).cuda()
                 flat_mask = sam_mask.permute(1, 2, 0).reshape(-1, N)
                 _, inverse_indices = torch.unique(flat_mask, return_inverse=True, dim = 0)
                 id_masks = inverse_indices.view(H, W).cpu().numpy()
             else:
                 id_masks = sam_mask
-
         try:
-            sam_features = torch.load(input_folder / "sam_features" / f"rgb_{frame_id}.pt")
+            sam_features = torch.load(os.path.join(input_folder, "sam_features", f"rgb_{idx}.pt"))
         except:
             pass
+
+        # grab per-view depth params (now guaranteed to have med_scale)
+        depth_params = None
+        if depths_params is not None and f"rgb_{idx}" in depths_params:
+            depth_params = depths_params[f"rgb_{idx}"]
+        else:
+            if depths_params is not None:
+                print("\n", key, "not found in depths_params")
+
+        # depth png path
+        if os.path.isdir(depths_folder):
+            depth_path = os.path.join(depths_folder, f"rgb_{idx}.png")
+        else:
+            depth_path = ""
+
 
         gt_seg = None
         if os.path.exists(gt_seg_path):
@@ -134,39 +146,29 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
         R = R.T
         t = pose[:3,3]
 
-        depth_path = ""
-        depth_param = None
-        if mono_depth_dir is not None:
-            mono_depth_path = mono_depth_dir / f"rgb_{frame_id}.png"
-            if mono_depth_path.exists():
-                depth_path = str(mono_depth_path)
-                if depth_params is not None:
-                    depth_param = depth_params.get(f"rgb_{frame_id}")
-
         cam = CameraInfo(
-            uid=frame_id,
+            uid=idx,
             R=R,
             T=t,
             FovX=fovx,
             FovY=fovy,
             image=image,
             image_name=image_name,
-            width=image.size[0],
-            height=image.size[1],
-            depth_params=depth_param,
+            width= img_w, height=img_h,
+            depth_params=depth_params,
             depth_path=depth_path,
             sam_mask=id_masks,
             instance_image=gt_seg,
-            image_path=str(rgb_path),
+            image_path=rgb_path,
             depth=depth,
             features=sam_features
         )
-        if frame_id in train_frame_ids:
+        if idx in train_idx:
             train_camera_infos.append(cam)
-        elif frame_id in test_frame_ids:
+        elif idx in test_idx:
             test_camera_infos.append(cam)
         else:
-            raise ValueError(f"Replica frame {frame_id} is not assigned to train or test split.")
+            raise
 
     nerf_normalization = getNerfppNorm(train_camera_infos)
 

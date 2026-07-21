@@ -392,57 +392,78 @@ class TriangleModel:
         self.pixel_count = torch.zeros((self._triangle_indices.shape[0]), dtype=torch.int, device="cuda")
 
 
-    def capture(self):
-        return (
+    def capture(self, mode='default', object_indices=None):
+        if mode=='default':
+            return (
+                self.active_sh_degree,
+                self._features_dc,
+                self._features_rest,
+                self._instance_feature,
+                self.optimizer.state_dict(),
+            )
+        elif mode=='Objects':
+            return (
+                self.active_sh_degree,
+                self._features_dc,
+                self._features_rest,
+                self._instance_feature,
+                self._triangle_indices[object_indices],
+                self.vertices,
+                self.vertex_weight,
+            )
+    
+    def restore(self, model_params, training_args=None,mode=None):
+        if mode == "obj":
+            (
             self.active_sh_degree,
             self._features_dc,
             self._features_rest,
             self._instance_feature,
-            self.optimizer.state_dict(),
-        )
-    
-    def restore(self, model_params, training_args):
-        self.active_sh_degree = model_params["active_sh_degree"]
-        self._features_dc = model_params["features_dc"]
-        self._features_rest = model_params["features_rest"]
-        self.vertices = model_params["triangles_points"]
-        self._triangle_indices = model_params["_triangle_indices"]
-        self.vertex_weight = model_params["vertex_weight"]
-        self._sigma = model_params["sigma"]
-        self.importance_score = model_params["importance_score"]
-        self.image_size = model_params["image_size"]
-        self.pixel_count = model_params["pixel_count"]
-        self._instance_feature = model_params.get("instance_feature", None)
-        opt_dict = model_params.get("opt_dict", None)
+            self._triangle_indices,
+            self.vertices,
+            self.vertex_weight)=model_params
+        elif mode==None:
+            self.active_sh_degree = model_params["active_sh_degree"]
+            self._features_dc = model_params["features_dc"]
+            self._features_rest = model_params["features_rest"]
+            self.vertices = model_params["triangles_points"]
+            self._triangle_indices = model_params["_triangle_indices"]
+            self.vertex_weight = model_params["vertex_weight"]
+            self._sigma = model_params["sigma"]
+            self.importance_score = model_params["importance_score"]
+            self.image_size = model_params["image_size"]
+            self.pixel_count = model_params["pixel_count"]
+            self._instance_feature = model_params.get("instance_feature", None)
+            opt_dict = model_params.get("opt_dict", None)
 
-        self.training_setup(
-            training_args,
-        )
-
-        if opt_dict is None:
-            print("No optimizer state found in checkpoint. Using freshly initialized optimizer.")
-            return
-
-        # Optimizer layouts can differ between training modes (e.g. include_feature on/off).
-        # Load only when parameter groups are compatible.
-        ckpt_groups = opt_dict.get("param_groups", [])
-        cur_groups = self.optimizer.param_groups
-
-        same_group_count = len(ckpt_groups) == len(cur_groups)
-        same_group_names = same_group_count and all(
-            ckpt_groups[i].get("name") == cur_groups[i].get("name")
-            for i in range(len(cur_groups))
-        )
-
-        if same_group_names:
-            self.optimizer.load_state_dict(opt_dict)
-        else:
-            ckpt_names = [g.get("name", "<unnamed>") for g in ckpt_groups]
-            cur_names = [g.get("name", "<unnamed>") for g in cur_groups]
-            print(
-                "Skipping optimizer state restore due to incompatible parameter groups. "
-                f"Checkpoint groups: {ckpt_names}, current groups: {cur_names}."
+            self.training_setup(
+                training_args,
             )
+
+            if opt_dict is None:
+                print("No optimizer state found in checkpoint. Using freshly initialized optimizer.")
+                return
+
+            # Optimizer layouts can differ between training modes (e.g. include_feature on/off).
+            # Load only when parameter groups are compatible.
+            ckpt_groups = opt_dict.get("param_groups", [])
+            cur_groups = self.optimizer.param_groups
+
+            same_group_count = len(ckpt_groups) == len(cur_groups)
+            same_group_names = same_group_count and all(
+                ckpt_groups[i].get("name") == cur_groups[i].get("name")
+                for i in range(len(cur_groups))
+            )
+
+            if same_group_names:
+                self.optimizer.load_state_dict(opt_dict)
+            else:
+                ckpt_names = [g.get("name", "<unnamed>") for g in ckpt_groups]
+                cur_names = [g.get("name", "<unnamed>") for g in cur_groups]
+                print(
+                    "Skipping optimizer state restore due to incompatible parameter groups. "
+                    f"Checkpoint groups: {ckpt_names}, current groups: {cur_names}."
+                )
 
     def replace_tensor_to_optimizer(self, tensor, name):
         optimizable_tensors = {}

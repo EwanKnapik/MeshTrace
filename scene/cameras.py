@@ -25,7 +25,7 @@ from utils.graphics_utils import getWorld2View2, getProjectionMatrix
 
 class Camera(nn.Module):
     def __init__(self, colmap_id, R, T, FoVx, FoVy, depth_params, image, invdepthmap, gt_alpha_mask,
-                 image_name, uid,sam_mask=None,
+                 image_name, uid,instance_image=None,sam_mask=None,depth=None,
                  trans=np.array([0.0, 0.0, 0.0]), scale=1.0, data_device = "cuda", normal_map=None, resolution=1.0
                  ):
         super(Camera, self).__init__()
@@ -50,7 +50,9 @@ class Camera(nn.Module):
             self.data_device = torch.device("cuda")
 
         self.original_image = image.clamp(0.0, 1.0).to(self.data_device)
+        self.original_instance_image = instance_image.astype(np.int32) if instance_image is not None else None
         self.sam_mask = sam_mask
+        self.gt_depth = depth
         self.image_width = self.original_image.shape[2]
         self.image_height = self.original_image.shape[1]
 
@@ -76,6 +78,8 @@ class Camera(nn.Module):
                     self.depth_mask *= 0
                 
                 if depth_params["scale"] > 0:
+                   # print(depth_params["scale"])
+                   # print(depth_params["offset"])
                     self.invdepthmap = self.invdepthmap * depth_params["scale"] + depth_params["offset"]
 
             if self.invdepthmap.ndim != 2:

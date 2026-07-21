@@ -11,8 +11,9 @@ def _dominant_labels_from_samples(
     mask_ids: torch.Tensor,
     num_triangles: int,
     device: torch.device,
+    output_dtype: torch.dtype = torch.long,
 ) -> torch.Tensor:
-    dominant_labels = torch.zeros((num_triangles,), device=device, dtype=torch.long)
+    dominant_labels = torch.zeros((num_triangles,), device=device, dtype=output_dtype)
     if triangle_ids.numel() == 0:
         return dominant_labels
 
@@ -35,11 +36,11 @@ def _dominant_labels_from_samples(
     best_masks.scatter_reduce_(0, winner_triangle_ids, winner_mask_ids, reduce="amin", include_self=True)
 
     has_label = best_masks != mask_base
-    dominant_labels[has_label] = best_masks[has_label].to(torch.long)
+    dominant_labels[has_label] = best_masks[has_label].to(output_dtype)
     return dominant_labels
 
 
-def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
+def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor, id_max=None,
           alpha_w=False, scaling_modifier=1.0, override_color=None):
     render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
     rend_ids = render_pkg["rend_ids"][0].long()
@@ -59,7 +60,7 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
     max_mask_id = int(flat_masks.max().item()) if flat_masks.numel() > 0 else 0
     num_mask_ids = max(max_mask_id + 1, 1)
 
-    weights = torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
+    weights = torch.zeros((num_triangles, num_mask_ids+1), device=id_masks.device, dtype=torch.float32)
     totals = torch.zeros((num_triangles,), device=id_masks.device, dtype=torch.long)
 
     if flat_rend_ids.numel() > 0:
@@ -71,6 +72,30 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
         weights = counts / denom
     return weights
 
+def compressed_trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
+          alpha_w=False, scaling_modifier=1.0, override_color=None):
+    render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
+    rend_ids = render_pkg["rend_ids"][0].long()
+    if id_masks.shape != rend_ids.shape:
+        print(f"{'!' * 10} sam_mask not same shape as rend_ids {'!' * 10}")
+
+    num_triangles = pc.get_triangle_indices.shape[0]
+    valid_pixels = (rend_ids >= 0) & (rend_ids < num_triangles) & (id_masks > 0)
+    flat_rend_ids = rend_ids[valid_pixels].reshape(-1).long()
+    flat_masks = id_masks[valid_pixels].reshape(-1).long()
+
+    label_dtype = id_masks.dtype
+    if label_dtype not in (torch.uint8, torch.int8, torch.int16, torch.int32, torch.int64):
+        label_dtype = torch.long
+
+    weights = _dominant_labels_from_samples(
+        triangle_ids=flat_rend_ids,
+        mask_ids=flat_masks,
+        num_triangles=num_triangles,
+        device=rend_ids.device,
+        output_dtype=label_dtype,
+    )
+    return weights
 
 def trace_dominant_labels(
     viewpoint_camera,

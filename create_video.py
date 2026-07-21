@@ -85,7 +85,7 @@ if __name__ == "__main__":
 
     triangles = TriangleModel(dataset.sh_degree)
 
-    triangles.load_parameters(os.path.join(args.model_path, "point_cloud/iteration_30000"), segment=False)
+    triangles.load_parameters(os.path.join(args.model_path, "point_cloud/iteration_chkpt_9000"), segment=False)
 
     triangles.scaling = 4
 

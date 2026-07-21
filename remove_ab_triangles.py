@@ -87,12 +87,15 @@ def prune_mask_from_was_rendered(triangles, viewpoints, pipe, background, unseen
             mask+= was_rendered
         return ~(mask!=0)
 
-def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, alpha_w):
+def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, alpha_w,start_checkpoint):
 
     first_iter = 0
     tb_writer = prepare_output_and_logger(dataset)
     triangles = TriangleModel(dataset.sh_degree)
-    scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma, load_iteration=-1)
+    if start_checkpoint:
+        scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma, load_iteration=start_checkpoint)
+    else:
+        scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma, load_iteration=-1)
     triangles.training_setup(opt)
     first_iter = 0
 
@@ -375,6 +378,7 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 3000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
+    parser.add_argument("--start_checkpoint", type=str, default=None)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--alpha_w", action="store_true", help="True for alpha_w")
 
@@ -390,7 +394,7 @@ if __name__ == "__main__":
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
     training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations,
-             args.test_iterations, args.checkpoint_iterations, args.alpha_w)
+             args.test_iterations, args.checkpoint_iterations, args.alpha_w, args.start_checkpoint)
 
     # All done
     print("\nTraining complete.")
