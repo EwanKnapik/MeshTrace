@@ -2,7 +2,7 @@
 #SBATCH --job-name=mesh_splatting
 #SBATCH --chdir=/home/KnapikE/mesh-splatting
 #SBATCH --partition=rtxpro
-#SBATCH --gres=gpu:1
+#SBATCH --gres=gpu:rtx_pro_6000:1
 #SBATCH --cpus-per-task=10
 #SBATCH --nodes=1
 #SBATCH --output=output/pipeline.%j.out
@@ -10,8 +10,8 @@
 export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
 
 
-#python train.py -s ~/input/REPLICA/office_0/Sequence_1 -m output/REPLICA/office_0/Sequence_1 --eval --iterations 20000
+python train.py -s ~/input/REPLICA/office_0/Sequence_1 -m output/REPLICA/office_0/Sequence_1 --eval --iterations 30000
 #python train.py -s ~/input/REPLICA/office_1/Sequence_1 -m output/REPLICA/office_1/Sequence_1 --eval --iterations 30000
-python train.py -s ~/input/REPLICA/office_2/Sequence_1 -m output/REPLICA/office_2/Sequence_1 --eval --iterations 30000
+#python train.py -s ~/input/REPLICA/office_2/Sequence_1 -m output/REPLICA/office_2/Sequence_1 --eval --iterations 30000
 #python train.py -s ~/input/REPLICA/office_3/Sequence_1 -m output/REPLICA/office_3/Sequence_1 --eval --iterations 30000
-python train.py -s ~/input/REPLICA/office_4/Sequence_1 -m output/REPLICA/office_4/Sequence_1 --eval --iterations 30000
+#python train.py -s ~/input/REPLICA/office_4/Sequence_1 -m output/REPLICA/office_4/Sequence_1 --eval --iterations 30000

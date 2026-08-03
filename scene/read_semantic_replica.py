@@ -6,6 +6,7 @@
 
 import math
 import os
+import matplotlib.pyplot as plt
 
 from utils.graphics_utils import focal2fov
 import cv2
@@ -68,20 +69,16 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
     poses = np.loadtxt(traj_path, delimiter=" ").reshape(-1, 4, 4)
     assert len(poses) == len(rgb_paths), f"Number of poses ({len(poses)}) and number of images ({len(rgb_paths)}) must match"
 
-    # Load the intrinsics
-    img_h, img_w = 480, 640
-    fx, fy, cx, cy = get_replica_semantic_intrisic(img_h, img_w)
-    fovx = focal2fov(fx, img_w)
-    fovy = focal2fov(fy, img_h)
     transf = transforms.ToTensor()
 
     depths_params = load_depth_params(input_folder / "sparse/0/depth_params.json")
 
     train_camera_infos = []
     test_camera_infos = []
+    nb_imgs=len(os.listdir(os.path.join(input_folder , "rgb" )))
 
     # Split the train/valid sets according to Egolifter
-    all_idx = np.arange(0, 900,image_stride)
+    all_idx = np.arange(0, nb_imgs,image_stride)
     test_idx = np.arange(0, len(all_idx), 4) # 25% of the images are used for validation
     train_idx = np.setdiff1d(all_idx, all_idx[test_idx])
     reject_view = []  
@@ -93,7 +90,7 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
         reject_view = np.arange(618, 734)
         print(f"Rejecting views for office_4: {reject_view}")
 
-    for idx in np.arange(0,900, image_stride):
+    for idx in np.arange(0,nb_imgs, image_stride):
         if idx in reject_view:
             continue
         rgb_path = os.path.join(input_folder , "rgb" , f"rgb_{idx}.png")
@@ -146,6 +143,14 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
         R = R.T
         t = pose[:3,3]
 
+        if idx==0:
+            # Load the intrinsics
+            print(image._size)
+            img_h, img_w = image._size
+            fx, fy, cx, cy = get_replica_semantic_intrisic(img_h, img_w)
+            fovx = focal2fov(fx, img_w)
+            fovy = focal2fov(fy, img_h)
+
         cam = CameraInfo(
             uid=idx,
             R=R,
@@ -185,7 +190,10 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
             print(f"Generating random point cloud ({num_pts})...")
             
             # We create random points inside the bounds of the synthetic Blender scenes
-            xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
+            if nb_imgs==900:
+                xyz = np.random.random((num_pts, 3)) * 8.5 - 4.25
+            else:
+                xyz = np.random.random((num_pts, 3)) * 2.6 - 1.3
             shs = np.random.random((num_pts, 3)) / 255.0
             pcd = BasicPointCloud(points=xyz, colors=SH2RGB(shs), normals=np.zeros((num_pts, 3)))
             storePly(ply_path, xyz, SH2RGB(shs) * 255)

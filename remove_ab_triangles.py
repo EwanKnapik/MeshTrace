@@ -50,7 +50,7 @@ def get_weights(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=Fals
     return weights
 
 # mask of triangles to delete
-def split_mask(triangles, viewpoints, pipe, background, sp_th=1, soft_th=0.8):
+def split_mask(triangles, viewpoints, pipe, background, sp_th=0.1, soft_th=1.0):
     with torch.no_grad():
         nums = torch.zeros(triangles.get_triangle_indices.shape[0], dtype=torch.int16).cuda()
         ab_nums = torch.zeros(triangles.get_triangle_indices.shape[0], dtype=torch.int16).cuda()
@@ -194,11 +194,8 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                 if iteration == 1 or iteration == opt.iterations:
                     with torch.no_grad():
                         p_mask = prune_mask_from_was_rendered(triangles, viewpoints, pipe, background, unseen=-1).cuda()
-                        print(f"p_mask : {p_mask.sum()}")
-                        #p_mask = split_mask(triangles, viewpoints, pipe, background,
-                        #                    sp_th=sp_th, soft_th=soft_th)
                         # prune_triangles uses a KEEP mask (opposite of GaussianModel)
-                        triangles.prune_triangles(~p_mask)
+                        triangles.prune_triangles(p_mask)
                         print('delete {} triangles, total {} triangles now'.format(
                             p_mask.sum(), triangles._triangle_indices.shape[0]))
                         with open(result_file, 'a') as f:
@@ -210,37 +207,34 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                     sp_mask = split_mask(triangles, viewpoints, pipe, background,
                                         sp_th=sp_th, soft_th=soft_th)
                     pre_split_num = sp_mask.sum()
-                    tri_areas = triangles.triangle_areas()
                     print(f'sp_mask num:{pre_split_num} total:{num_triangles}, '
-                          f'ratio {pre_split_num / num_triangles}, '
-                          f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}')
+                          f'ratio {pre_split_num / num_triangles}, ')
                     if pcycle == (opt.split_cycle_num if hasattr(opt, 'split_cycle_num') else 0):
                         with open(result_file, 'a') as f:
                             f.write(f'Before: sp_mask num:{pre_split_num} total:{num_triangles}, '
-                                    f'ratio {pre_split_num / num_triangles}, '
-                                    f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}\n')
+                                    f'ratio {pre_split_num / num_triangles}, ')
 
                     # Delete-only behavior: remove ambiguous triangles directly.
                     ob_ratio = sp_mask.sum().item()
                     triangles.prune_triangles(~sp_mask)
                     pcycle -= 1
 
-            #if iteration == opt.iterations:
-            #    sp_mask = split_mask(triangles, viewpoints, pipe, background,
-            #                        threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
-            #    print(sp_mask.sum())
-            #    tri_areas = triangles.triangle_areas()
-            #    with open(result_file, 'a') as f:
-            #        f.write(f'After: sp_mask num:{sp_mask.sum()} total:{triangles._triangle_indices.shape[0]}, '
-            #                f'ratio {sp_mask.sum() / triangles._triangle_indices.shape[0]}, '
-            #                f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}\n')
+            if iteration == opt.iterations:
+                sp_mask = split_mask(triangles, viewpoints, pipe, background,
+                                    sp_th=sp_th, soft_th=soft_th)
+                print(sp_mask.sum())
+                tri_areas = triangles.triangle_areas()
+                with open(result_file, 'a') as f:
+                    f.write(f'After: sp_mask num:{sp_mask.sum()} total:{triangles._triangle_indices.shape[0]}, '
+                            f'ratio {sp_mask.sum() / triangles._triangle_indices.shape[0]}, '
+                            f'mean area {tri_areas[sp_mask].mean() if sp_mask.any() else 0}\n')
 
-            #if iteration % 1000 == 0:
-            #    # Current abnormal triangles
-            #    sp_mask = split_mask(triangles, viewpoints, pipe, background,
-            #                        threshold=threshold, sp_th=sp_th, soft_th=soft_th, alpha_w=alpha_w)
-            #    tri_areas = triangles.triangle_areas()
-            #    print(sp_mask.sum(), tri_areas[sp_mask].mean() if sp_mask.any() else 0)
+            if iteration % 1000 == 0:
+                # Current abnormal triangles
+                sp_mask = split_mask(triangles, viewpoints, pipe, background,
+                                    sp_th=sp_th, soft_th=soft_th)
+                tri_areas = triangles.triangle_areas()
+                print(sp_mask.sum(), tri_areas[sp_mask].mean() if sp_mask.any() else 0)
 
             # Log and save
             if tb_writer is not None:
@@ -378,7 +372,6 @@ if __name__ == "__main__":
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[1, 3000])
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--start_checkpoint", type=str, default=None)
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--alpha_w", action="store_true", help="True for alpha_w")
 

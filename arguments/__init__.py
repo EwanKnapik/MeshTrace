@@ -62,6 +62,7 @@ class ModelParams(ParamGroup):
         self._resolution = -1
         self._white_background = False
         self.data_device = "cuda"
+        self.start_checkpoint=""
         self.eval = False
         self.sam_folder = "-"
         self.stride=1
@@ -156,8 +157,8 @@ class OptimizationParams(ParamGroup):
         self.split = False
 
         # split thresholds
-        self.sp_th = 0.4
-        self.soft_th = 0.8
+        self.sp_th = 0.1
+        self.soft_th = 1.0
 
         # Contrastive feature training
         self.sample_num = 4096

@@ -97,7 +97,6 @@ if __name__ == "__main__":
     pipeline = PipelineParams(parser)
     op = OptimizationParams(parser)
     parser.add_argument("--iteration", default=-1, type=int)
-    parser.add_argument("--start_checkpoint", default=None, type=str)
     parser.add_argument("--alpha_w", action="store_true", help="True for alpha_w")
     parser.add_argument('--save_path', type=str, default=None,help="Path to save visualization results")
     parser.add_argument('--result_save_path', type=str, default=None,help="Path to save result json")
@@ -273,10 +272,12 @@ if __name__ == "__main__":
             miou_2d = torch.tensor(mask_iou_2d).mean().cpu().numpy()
             macc_2d = torch.tensor(mask_acc_2d).mean().cpu().numpy()
     # --------------------------------------------------------------------------------------trace objects
-            weights = torch.zeros(triangles.get_triangle_indices.shape[0],masks[0].max().item()+1)
+            weights = []
             for idx, viewpoint in enumerate(viewpoints):
                 w = trace(viewpoint, triangles, masks[idx], pipe, background, alpha_w)  # [P,2]
-                weights+=w
+                weights.append(w)
+            weights = torch.stack(weights)
+            weights = weights.sum(0)  # [view,P,2]->[P,2]
 
             tris_mask = weights[:, 1]/weights.sum(1).clamp(1e-9) > trace_th
     # --------------------------------------------------------------------------------------filter occ views

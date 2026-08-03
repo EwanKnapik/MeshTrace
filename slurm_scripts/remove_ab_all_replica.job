@@ -1,0 +1,20 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtxpro
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
+
+
+python remove_ab_triangles.py -s ~/input/REPLICA/office_0/Sequence_1 -m output/REPLICA/office_0/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+python remove_ab_triangles.py -s ~/input/REPLICA/office_1/Sequence_1 -m output/REPLICA/office_1/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+python remove_ab_triangles.py -s ~/input/REPLICA/office_2/Sequence_1 -m output/REPLICA/office_2/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+#python remove_ab_triangles.py -s ~/input/REPLICA/office_3/Sequence_1 -m output/REPLICA/office_3/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+python remove_ab_triangles.py -s ~/input/REPLICA/office_4/Sequence_1 -m output/REPLICA/office_4/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+#python remove_ab_triangles.py -s ~/input/REPLICA/room_0/Sequence_1 -m output/REPLICA/room_0/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+python remove_ab_triangles.py -s ~/input/REPLICA/room_1/Sequence_1 -m output/REPLICA/room_1/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split
+python remove_ab_triangles.py -s ~/input/REPLICA/room_2/Sequence_1 -m output/REPLICA/room_2/Sequence_1 --eval --sam_folder split_ms --iterations 9000 --prune --split

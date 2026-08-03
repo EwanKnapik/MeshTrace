@@ -1,3 +1,5 @@
 
  office_0: mIoU 43.94  mAcc 46.31  mPNSR 15.01 Scene_IOU 0.7023345828056335 output/REPLICA/office_0_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
  office_0: mIoU 49.13  mAcc 51.64  mPNSR 15.59 Scene_IOU 0.6553999781608582 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 62.62  mAcc 64.09  mPNSR 16.26 Scene_IOU 0.8875054717063904 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 62.62  mAcc 64.09  mPNSR 16.26 Scene_IOU 0.8875054717063904 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt

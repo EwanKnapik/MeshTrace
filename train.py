@@ -41,6 +41,7 @@ import torch.nn.functional as F
 import matplotlib.pyplot as plt
 import numpy as np
 from PIL import Image
+from pathlib import Path
 try:
     from fused_ssim import fused_ssim
     FUSED_SSIM_AVAILABLE = True
@@ -54,10 +55,17 @@ try:
 except:
     SPARSE_ADAM_AVAILABLE = False
 from utils.render_utils import generate_path, create_videos
-from utils.make_depth_scale import detect_dataset_type
 
 import random
 
+def detect_dataset_type(base_dir):
+    if (Path(base_dir) / "traj_w_c.txt").exists():
+        return "replica"
+    if (Path(base_dir) / "metadata.json").exists():
+        return "klevr"
+    if (Path(base_dir) / "transforms_train.json").exists():
+        return "blender"
+    return "colmap"
 
 def training(
         dataset,   
@@ -83,7 +91,7 @@ def training(
     triangles.training_setup(opt)
     triangles.add_percentage = opt.add_percentage
 
-    dataset_type=detect_dataset_type(dataset.source_dir)
+    dataset_type=detect_dataset_type(dataset.source_path)
     if checkpoint:
         (model_params, first_iter) = torch.load(checkpoint)
         triangles.restore(model_params, opt)
@@ -168,14 +176,20 @@ def training(
 
         render_pkg = render(viewpoint_cam, triangles, pipe, bg)
         image = render_pkg["render"]
-        #if iteration %1000==0:
-        #    plt.figure()
-        #    plt.imshow(image.permute(1, 2, 0).detach().cpu().numpy())
-        #    plt.axis("off")
-        #    plt.savefig(f"renders_images/base_train_render_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
-        #    plt.close()
-        # Loss
         gt_image = viewpoint_cam.original_image.cuda()
+        if iteration %1000==0:
+            print(f"-----------{iteration}---------------")
+            print(viewpoint_cam.world_view_transform.contiguous())
+            print(viewpoint_cam.full_proj_transform.contiguous())
+            plt.figure()
+            plt.subplot(1, 2, 1)
+            plt.imshow(gt_image.permute(1, 2, 0).cpu().numpy())
+            plt.axis("off")
+            plt.subplot(1, 2, 2)
+            plt.imshow(image.permute(1, 2, 0).detach().cpu().numpy())
+            plt.axis("off")
+            plt.savefig(f"train_debug/base_train_render_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
+            plt.close()
         if getattr(viewpoint_cam, "normal_map", None) is not None:
             gt_normal = viewpoint_cam.normal_map.cuda()
             seg_hr = gt_normal.unsqueeze(0)  # -> [1, 3, H, W]
@@ -391,10 +405,9 @@ def training(
                 triangles.optimizer.step()
                 triangles.optimizer.zero_grad(set_to_none = True)
 
-
-            if (iteration in save_iterations):
-                scene.save(f"new_{iteration}")          
-                print("\n[ITER {}] Saving Checkpoint".format(iteration))
+            #if (iteration in save_iterations):
+            #    scene.save(f"{iteration}")          
+            #    print("\n[ITER {}] Saving Checkpoint".format(iteration))
 
     # cleaning of triangles that we do not need
     viewpoint_stack = scene.getTrainCameras().copy()
@@ -421,7 +434,7 @@ def training(
     vertex_mask = used_vertex_mask
     triangles._prune_vertices(vertex_mask)
 
-    scene.save(f"depth_{iteration}")          
+    scene.save(f"{iteration}")          
     print("Training is done")
 
 def prepare_output_and_logger(args):    
@@ -511,11 +524,10 @@ if __name__ == "__main__":
     parser.add_argument('--debug_from', type=int, default=-1)
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--test_iterations", nargs="+", type=int, default=[7_000, 30_000])
-    parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    #parser.add_argument("--save_iterations", nargs="+", type=int, default=[7_000, 30_000])
+    parser.add_argument("--save_iterations", nargs="+", type=int, default=[])
     parser.add_argument("--quiet", action="store_true")
     parser.add_argument("--checkpoint_iterations", nargs="+", type=int, default=[])
-    parser.add_argument("--start_checkpoint", type=str, default = None)
-
     parser.add_argument('--wandb_name', default="Test", type=str)
     parser.add_argument('--scene_name', default="Garden", type=str)
     parser.add_argument("--use_sparse_adam", action="store_true", default=True)

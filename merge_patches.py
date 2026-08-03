@@ -299,15 +299,14 @@ def main():
     parser.add_argument("--alpha_w", action="store_true")
     parser.add_argument("--large_scene", default=False)
     parser.add_argument("--precomp_id_map", default=False)
-    parser.add_argument("--start_checkpoint", type=str, default=None)
     args = get_combined_args(parser)
     print(args._get_args)
 
     dataset, iteration, pipe = model.extract(args), args.iteration, pipeline.extract(args)
     triangles = TriangleModel(dataset.sh_degree)
     dataset.sam_folder = "empty" #prevent sam loading
-    if args.start_checkpoint:
-        scene = Scene(dataset, triangles, init_opacity=None, set_sigma=None, shuffle=False, load_iteration=args.start_checkpoint)
+    if dataset.start_checkpoint:
+        scene = Scene(dataset, triangles, init_opacity=None, set_sigma=None, shuffle=False, load_iteration=dataset.start_checkpoint)
     else:
         scene = Scene(dataset, triangles, init_opacity=None, set_sigma=None, shuffle=False, load_iteration=-1)
 

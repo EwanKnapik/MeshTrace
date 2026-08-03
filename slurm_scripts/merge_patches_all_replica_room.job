@@ -10,6 +10,6 @@
 export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
 
 
-python train.py -s ~/input/REPLICA/room_0/Sequence_1 -m output/REPLICA/room_0/Sequence_1 --eval --iterations 30000
-python train.py -s ~/input/REPLICA/room_1/Sequence_1 -m output/REPLICA/room_1/Sequence_1 --eval --iterations 30000
-python train.py -s ~/input/REPLICA/room_2/Sequence_1 -m output/REPLICA/room_2/Sequence_1 --eval --iterations 30000
+#python merge_patches.py -s ~/input/REPLICA/room_0/Sequence_1 -m output/REPLICA/room_0/Sequence_1 || exit 1
+#python merge_patches.py -s ~/input/REPLICA/room_1/Sequence_1 -m output/REPLICA/room_1/Sequence_1 || exit 1
+python merge_patches.py -s ~/input/REPLICA/room_2/Sequence_1 -m output/REPLICA/room_2/Sequence_1 || exit 1

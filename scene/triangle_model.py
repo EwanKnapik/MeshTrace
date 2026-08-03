@@ -938,11 +938,109 @@ class TriangleModel:
         
     def split_triangles(self, mask):
         # needs a split mask, NOT a keep mask
-        selected_triangles = self._triangle_indices[mask]
-        barycenters = self.vertices[selected_triangles[:, 0]]
-        barycenters = barycenters + self.vertices[selected_triangles[:, 1]]
-        barycenters = barycenters + self.vertices[selected_triangles[:, 2]]
-        barycenters = barycenters * (1.0 / 3.0)
+        device = self._triangle_indices.device
+
+        selected_triangles = self._triangle_indices[mask].long()
+
+        split_count = selected_triangles.shape[0]
+        old_vertex_count = self.vertices.shape[0]
+        old_triangle_count = self._triangle_indices.shape[0]
+
+        barycenters = self.vertices[selected_triangles].mean(dim=1)
+        barycenter_indices = torch.arange(
+            old_vertex_count,
+            old_vertex_count + split_count,
+            device=device,
+            dtype=torch.int32,
+        )
+
+        optimizer_tensors = {}
+        if self.optimizer is not None:
+            group_names = {group["name"] for group in self.optimizer.param_groups}
+            if "vertices" in group_names:
+                optimizer_tensors["vertices"] = barycenters
+            if "vertex_weight" in group_names and isinstance(self.vertex_weight, torch.Tensor) and self.vertex_weight.shape[0] == old_vertex_count:
+                avg_opacity = self.opacity_activation(self.vertex_weight[selected_triangles]).mean(dim=1)
+                avg_opacity = avg_opacity.clamp(self.opacity_floor + self.eps, 1.0 - self.eps)
+                optimizer_tensors["vertex_weight"] = self.inverse_opacity_activation(avg_opacity)
+            if "f_dc" in group_names and isinstance(self._features_dc, torch.Tensor) and self._features_dc.shape[0] == old_vertex_count:
+                optimizer_tensors["f_dc"] = self._features_dc[selected_triangles].mean(dim=1)
+            if "f_rest" in group_names and isinstance(self._features_rest, torch.Tensor) and self._features_rest.shape[0] == old_vertex_count:
+                optimizer_tensors["f_rest"] = self._features_rest[selected_triangles].mean(dim=1)
+            if (
+                "instance_feature" in group_names
+                and self._instance_feature is not None
+                and self._instance_feature.shape[0] == old_vertex_count
+            ):
+                optimizer_tensors["instance_feature"] = self._instance_feature[selected_triangles].mean(dim=1)
+
+        optimizable_tensors = self.cat_tensors_to_optimizer(optimizer_tensors) if optimizer_tensors else {}
+
+        def append_tensor(name, attr_name, extension):
+            if extension is None:
+                return
+            if name in optimizable_tensors:
+                setattr(self, attr_name, optimizable_tensors[name])
+                return
+
+            tensor = getattr(self, attr_name)
+            if not isinstance(tensor, torch.Tensor) or tensor.shape[0] == 0:
+                return
+
+            appended = torch.cat((tensor.detach(), extension.detach()), dim=0)
+            if isinstance(tensor, nn.Parameter):
+                setattr(self, attr_name, nn.Parameter(appended, requires_grad=tensor.requires_grad))
+            else:
+                setattr(self, attr_name, appended.requires_grad_(tensor.requires_grad))
+
+        append_tensor("vertices", "vertices", barycenters)
+        if isinstance(self.vertex_weight, torch.Tensor) and self.vertex_weight.shape[0] == old_vertex_count:
+            avg_opacity = self.opacity_activation(self.vertex_weight[selected_triangles]).mean(dim=1)
+            avg_opacity = avg_opacity.clamp(self.opacity_floor + self.eps, 1.0 - self.eps)
+            append_tensor("vertex_weight", "vertex_weight", self.inverse_opacity_activation(avg_opacity))
+        if isinstance(self._features_dc, torch.Tensor) and self._features_dc.shape[0] == old_vertex_count:
+            append_tensor("f_dc", "_features_dc", self._features_dc[selected_triangles].mean(dim=1))
+        if isinstance(self._features_rest, torch.Tensor) and self._features_rest.shape[0] == old_vertex_count:
+            append_tensor("f_rest", "_features_rest", self._features_rest[selected_triangles].mean(dim=1))
+        if self._instance_feature is not None and self._instance_feature.shape[0] == old_vertex_count:
+            append_tensor("instance_feature", "_instance_feature", self._instance_feature[selected_triangles].mean(dim=1))
+
+        selected_triangles = selected_triangles.to(torch.int32)
+        child_0 = torch.stack(
+            (barycenter_indices, selected_triangles[:, 1], selected_triangles[:, 2]),
+            dim=1,
+        )
+        child_1 = torch.stack(
+            (selected_triangles[:, 0], barycenter_indices, selected_triangles[:, 2]),
+            dim=1,
+        )
+        child_2 = torch.stack(
+            (selected_triangles[:, 0], selected_triangles[:, 1], barycenter_indices),
+            dim=1,
+        )
+
+        if self._instance_feature is not None and self._instance_feature.shape[0] == old_triangle_count:
+            selected_instance_feature = self._instance_feature[mask]
+            self._instance_feature = torch.cat(
+                (
+                    self._instance_feature,
+                    selected_instance_feature,
+                    selected_instance_feature,
+                ),
+                dim=0,
+            )
+
+        self._triangle_indices[mask] = child_0
+        self._triangle_indices = torch.cat(
+            (self._triangle_indices, child_1, child_2),
+            dim=0,
+        ).to(torch.int32).contiguous()
+
+        triangle_count = self._triangle_indices.shape[0]
+        self.image_size = torch.zeros((triangle_count,), dtype=torch.float, device=device)
+        self.importance_score = torch.zeros((triangle_count,), dtype=torch.float, device=device)
+        self.pixel_count = torch.zeros((triangle_count,), dtype=torch.int, device=device)
+
         
         
 

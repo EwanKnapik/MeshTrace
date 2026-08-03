@@ -221,7 +221,6 @@ if __name__ == "__main__":
     parser.add_argument('--detect_anomaly', action='store_true', default=False)
     parser.add_argument("--save_iterations", nargs="+", type=int, default=[20000])
     parser.add_argument("--quiet", action="store_true")
-    parser.add_argument("--start_checkpoint", type=str, default = None)
     parser.add_argument("--save_name", type=str,help="name of stored checkpoint")
 
     args = parser.parse_args(sys.argv[1:])
