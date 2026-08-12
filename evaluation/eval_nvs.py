@@ -23,7 +23,19 @@ test_ids = {
     'office_4': [1, 2, 6, 7, 9, 11, 17, 22, 23, 26, 33, 34, 39, 47, 49, 51, 52, 53, 55, 56],
     'room_0': [5, 6, 7, 10, 13, 14, 16, 25, 32, 33, 35, 46, 51, 53, 55, 60, 64, 67, 68, 83, 86, 87, 92],
     'room_1': [1, 2, 4, 6, 7, 9, 10, 11, 16, 18, 24, 28, 32, 36, 37, 44, 48, 52, 54, 56],
-    'room_2': [3, 5, 6, 7, 8, 9, 11, 12, 16, 18, 22, 26, 27, 37, 38, 39, 40, 43, 49, 55, 56]
+    'room_2': [3, 5, 6, 7, 8, 9, 11, 12, 16, 18, 22, 26, 27, 37, 38, 39, 40, 43, 49, 55, 56],
+    "Hotdog": [
+        0, 1, 2, 3, 6, 7, 8, 11, 12, 13,
+    ],
+    "indoor_plant_ficus": [
+        0, 2, 3, 4, 5, 9, 10, 11
+    ],
+    "Detailed_Drum_Set": [
+        0, 3, 10, 12, 13, 14, 15, 16, 18, 20, 23, 24, 38, 39, 40, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 53, 55, 56, 59, 60, 61, 63, 64, 65, 66, 67, 69, 70, 71, 72, 73, 74, 75, 76
+    ],
+    "Microphone": [
+            0, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 25, 26, 28, 32, 34, 35
+    ],
 }
 
 def feature_map(viewpoint_cam, triangles, pipe, background):
@@ -39,7 +51,6 @@ if __name__ == "__main__":
     pipeline = PipelineParams(parser)
     parser.add_argument("--iteration", default=-1, type=int)
     parser.add_argument("--iter", default=30000, type=int)
-    parser.add_argument("--start_checkpoint", default=None, type=str)
     parser.add_argument('--save_path', type=str, default=None)
     parser.add_argument("--skip_feat_norm", action="store_true")
     args = get_combined_args(parser)
@@ -55,7 +66,10 @@ if __name__ == "__main__":
     triangles.restore(model_params, opt)
     method = dataset.sam_folder
 
-    scene_name = os.path.basename(dataset.source_path[:-11])
+    if os.path.basename(dataset.source_path)=="Sequence_1":
+        scene_name = os.path.basename(dataset.source_path[:-11])
+    else: 
+        scene_name = os.path.basename(dataset.source_path)
     train_viewpoints = scene.getTrainCameras().copy()
     test_viewpoints = scene.getTestCameras().copy()
 

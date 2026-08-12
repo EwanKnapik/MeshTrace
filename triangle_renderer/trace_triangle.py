@@ -4,7 +4,16 @@ import torch.nn.functional as F
 from triangle_renderer import render
 from diff_triangle_rasterization import TriangleRasterizationSettings, TriangleRasterizer
 from scene.triangle_model import TriangleModel
+import matplotlib.pyplot as plt
+from io import BytesIO
+from sixel import sixel
 
+def sixel_fig():
+    buffer = BytesIO()
+    plt.savefig(buffer, format='png', bbox_inches='tight')
+
+    writer = sixel.SixelWriter()
+    writer.draw(buffer)
 
 def _dominant_labels_from_samples(
     triangle_ids: torch.Tensor,
@@ -41,7 +50,7 @@ def _dominant_labels_from_samples(
 
 
 def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor, id_max=None,
-          alpha_w=False, scaling_modifier=1.0, override_color=None):
+          alpha_w=False, scaling_modifier=1.0, override_color=None,num_class=None):
     render_pkg = render(viewpoint_camera, pc, pipe, bg_color)
     rend_ids = render_pkg["rend_ids"][0].long()
     if id_masks.shape != rend_ids.shape:
@@ -57,17 +66,18 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
     flat_rend_ids = flat_rend_ids[valid_mask_labels]
     flat_masks = flat_masks[valid_mask_labels]
 
-    max_mask_id = int(flat_masks.max().item()) if flat_masks.numel() > 0 else 0
-    num_mask_ids = max(max_mask_id + 1, 1)
+    if num_class==None:
+        max_mask_id = int(flat_masks.max().item()) if flat_masks.numel() > 0 else 0
+    else:
+        max_class_id=num_class
 
-    weights = torch.zeros((num_triangles, num_mask_ids+1), device=id_masks.device, dtype=torch.float32)
-    totals = torch.zeros((num_triangles,), device=id_masks.device, dtype=torch.long)
+    num_mask_ids=max_class_id+1
+    weights = torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
 
     if flat_rend_ids.numel() > 0:
         linear_idx = flat_rend_ids * num_mask_ids + flat_masks
         counts = torch.bincount(linear_idx, minlength=num_triangles * num_mask_ids).float()
         counts = counts.view(num_triangles, num_mask_ids)
-        totals = counts.sum(dim=1).long()
         denom = counts.sum(dim=1, keepdim=True).clamp(min=1.0)
         weights = counts / denom
     return weights

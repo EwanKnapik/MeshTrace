@@ -45,17 +45,29 @@ def split_mask(triangles, viewpoints, pipe, background, sp_th=0.1, soft_th=1.0):
             w = trace(view, triangles, id_masks, pipe, background)
             seen = w.sum(-1) > 0
             value, _ = torch.max(w, dim=-1)
+            if (value[seen]).min() !=0:
+                print((value[seen]).min())
+                print((value[seen]).max())
             ab = (value < soft_th) & seen
             nums += seen
             ab_nums += ab
         # number of time triangle seen with ambiguous value / number of time seen
         # if ratio is too high, means that triangle seen most of the time with ambiguous value
         # if across all views: bad means that generally bad → flag
-        print((ab_nums / (nums + 1e-6)).max())
-        print((ab_nums / (nums + 1e-6)).min())
+        print(f"ab nums:{ab_nums.sum()}, nums:{nums.sum()}")
         sp_mask = (ab_nums / (nums + 1e-6)) > sp_th
 
     return sp_mask
+
+def prune_mask(triangles, viewpoints, pipe, background, unseen=-1, alpha_w=False):
+    with torch.no_grad():
+        num_triangles = triangles.get_triangle_indices.shape[0]
+        mask=torch.zeros(num_triangles).cuda()
+        for idx, view in enumerate(viewpoints):
+            render_pkg = render(view, triangles, pipe, background)
+            was_rendered=render_pkg["triangle_was_rendered"]
+            mask+= was_rendered
+        return (mask!=0)
 
 def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, alpha_w):
 
@@ -73,16 +85,25 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
 
     viewpoints = scene.getTrainCameras().copy()
 
-    sp_mask = split_mask(triangles, viewpoints, pipe, background)
-    num_triangles = triangles.get_triangle_indices.shape[0]
-    tri_areas_before = triangles.triangle_areas()
-    triangles.split_triangles(sp_mask)
-    tri_areas_after = triangles.triangle_areas()
-    print(f'sp_mask num:{sp_mask.sum()}, '
-            f'triangles before {num_triangles},'
-            f'triangles after {triangles.get_triangle_indices.shape[0]},'
-            f'mean area before {tri_areas_before.sum()},'
-            f'mean area after {tri_areas_after.sum()}')
+
+    #p_mask = prune_mask(triangles, viewpoints, pipe, background, unseen=-1).cuda()
+    #triangles.prune_triangles(p_mask)
+    step=5
+
+    res=torch.zeros(step,step)
+
+    print("")
+    for i in range(1,step+1):
+        for j in range(1,step+1):
+            print(f"\r step {i*j}")
+            sp_th=i/step
+            soft_th=j/step
+            sp_mask = split_mask(triangles, viewpoints, pipe, background,sp_th=i,soft_th=j)
+
+            res[i:j]=sp_mask.sum()
+
+    print(res)
+
 
 
 

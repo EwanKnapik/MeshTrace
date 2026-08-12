@@ -1,0 +1,17 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtxpro
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
+
+
+
+#python train_contrastive.py -s ~/input/custom/Detailed\ Drum\ Set -m output/custom/Detailed\ Drum\ Set --iterations 20000 --start_checkpoint output/custom/Detailed\ Drum\ Set/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+python train_contrastive.py -s ~/input/custom/indoor\ plant\ ficus/ -m output/custom/indoor\ plant\ ficus/ --iterations 20000 --start_checkpoint output/custom/indoor\ plant\ ficus//point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+#python train_contrastive.py -s ~/input/custom/Hotdog -m output/custom/Hotdog --iterations 20000 --start_checkpoint output/custom/Hotdog/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000
+#python train_contrastive.py -s ~/input/custom/Microphone -m output/custom/Microphone --iterations 20000 --start_checkpoint output/custom/Microphone/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000

@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=mesh_splatting
 #SBATCH --chdir=/home/KnapikE/mesh-splatting
-#SBATCH --partition=rtxpro
+#SBATCH --partition=rtx40
 #SBATCH --gres=gpu:1
 #SBATCH --cpus-per-task=10
 #SBATCH --nodes=1
@@ -11,9 +11,9 @@ export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PAT
 
 # --- 2. EXECUTION PIPELINE ---
 # We use '|| exit 1' to stop the job immediately if a step fails.
-dataset=REPLICA
+dataset=custom
 path=~/input/${dataset}
-scene='office_3/Sequence_1' 
+scene=Detailed_Drum_Set 
 
 output=./output/${dataset}/${scene} 
 source=${path}/${scene}
@@ -34,5 +34,4 @@ python evaluation/eval_3d.py \
     --result_save_path ./output/test_3d\
     --clean_history \
     --method split \
-    --replica \
     --start_checkpoint ${output}/point_cloud/iteration_sp_${contra_iter}/point_cloud_state_dict.pt \

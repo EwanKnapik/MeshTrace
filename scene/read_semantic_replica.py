@@ -17,7 +17,7 @@ from pathlib import Path
 from utils.sh_utils import SH2RGB
 
 from PIL import Image
-from scene.gaussian_model import BasicPointCloud
+from utils.graphics_utils import BasicPointCloud
 import torch
 import torchvision.transforms as transforms
 from scene.config import DEFAULT_SAM_FOLDER
@@ -31,6 +31,7 @@ from scene.dataset_readers import (
     storePly,
 )
 from utils.replica_utils import build_replica_pose_map, discover_replica_rgb_frames
+from glob import glob
 
 def glob_data(data_dir):
     data_paths = []
@@ -71,11 +72,13 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
 
     transf = transforms.ToTensor()
 
-    depths_params = load_depth_params(input_folder / "sparse/0/depth_params.json")
-
     train_camera_infos = []
     test_camera_infos = []
-    nb_imgs=len(os.listdir(os.path.join(input_folder , "rgb" )))
+    nb_imgs=len(rgb_paths)
+    if nb_imgs==900:
+        white_background=False
+    if nb_imgs==300:
+        white_background=False
 
     # Split the train/valid sets according to Egolifter
     all_idx = np.arange(0, nb_imgs,image_stride)
@@ -119,20 +122,11 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
         except:
             pass
 
-        # grab per-view depth params (now guaranteed to have med_scale)
-        depth_params = None
-        if depths_params is not None and f"rgb_{idx}" in depths_params:
-            depth_params = depths_params[f"rgb_{idx}"]
-        else:
-            if depths_params is not None:
-                print("\n", key, "not found in depths_params")
-
         # depth png path
         if os.path.isdir(depths_folder):
             depth_path = os.path.join(depths_folder, f"rgb_{idx}.png")
         else:
             depth_path = ""
-
 
         gt_seg = None
         if os.path.exists(gt_seg_path):
@@ -146,11 +140,17 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
         if idx==0:
             # Load the intrinsics
             print(image._size)
-            img_h, img_w = image._size
+            img_w, img_h = image._size
             fx, fy, cx, cy = get_replica_semantic_intrisic(img_h, img_w)
             fovx = focal2fov(fx, img_w)
             fovy = focal2fov(fy, img_h)
 
+        im_data = np.array(image.convert("RGBA"))
+        bg = np.array([1,1,1]) if white_background else np.array([0, 0, 0])
+
+        norm_data = im_data / 255.0
+        arr = norm_data[:,:,:3] * norm_data[:, :, 3:4] + bg * (1 - norm_data[:, :, 3:4])
+        image = Image.fromarray(np.array(arr*255.0, dtype=np.uint8), "RGB")
         cam = CameraInfo(
             uid=idx,
             R=R,
@@ -160,7 +160,6 @@ def read_semantic_ReplicaInfo(input_folder: str, image_stride:int = 1, sam_folde
             image=image,
             image_name=image_name,
             width= img_w, height=img_h,
-            depth_params=depth_params,
             depth_path=depth_path,
             sam_mask=id_masks,
             instance_image=gt_seg,

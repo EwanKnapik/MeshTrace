@@ -160,6 +160,12 @@ class OptimizationParams(ParamGroup):
         self.sp_th = 0.1
         self.soft_th = 1.0
 
+        # self.split_interval = 100000#prune gaussina
+        self.split_from_iter = 10#prune gaussina
+        # self.split_until_iter = 11#prune gaussian
+        self.split_cycle_num=4 #Number of split cycles
+        self.split_cycle_interval=1000
+
         # Contrastive feature training
         self.sample_num = 4096
         self.feature_dim = 16

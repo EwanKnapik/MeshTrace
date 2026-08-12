@@ -1,0 +1,21 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtxpro
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
+
+
+
+python train_contrastive.py -s ~/input/REPLICA/office_0/Sequence_1 -m output/REPLICA/office_0/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/office_0/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+python train_contrastive.py -s ~/input/REPLICA/office_1/Sequence_1 -m output/REPLICA/office_1/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/office_1/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+python train_contrastive.py -s ~/input/REPLICA/office_2/Sequence_1 -m output/REPLICA/office_2/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/office_2/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+#python train_contrastive.py -s ~/input/REPLICA/office_3/Sequence_1 -m output/REPLICA/office_3/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/office_3/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000
+python train_contrastive.py -s ~/input/REPLICA/office_4/Sequence_1 -m output/REPLICA/office_4/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/office_4/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+#python train_contrastive.py -s ~/input/REPLICA/room_0/Sequence_1 -m output/REPLICA/room_0/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/room_0/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+python train_contrastive.py -s ~/input/REPLICA/room_1/Sequence_1 -m output/REPLICA/room_1/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/room_1/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 
+python train_contrastive.py -s ~/input/REPLICA/room_2/Sequence_1 -m output/REPLICA/room_2/Sequence_1 --iterations 20000 --start_checkpoint output/REPLICA/room_2/Sequence_1/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ --save_iteration 20000 

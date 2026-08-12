@@ -8,9 +8,17 @@
 #SBATCH --output=output/pipeline.%j.out
 #SBATCH --error=error/pipeline.%j.err
 
-python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_1/Sequence_1/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_1/Sequence_1/
 #python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_2/Sequence_1/
 #python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_3/Sequence_1/
 #python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/office_4/Sequence_1/
 #python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/room_1/Sequence_1/
 #python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/REPLICA/room_2/Sequence_1/
+
+
+
+
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Detailed\ Drum\ Set
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/indoor\ plant\ ficus/
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Hotdog
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Microphone

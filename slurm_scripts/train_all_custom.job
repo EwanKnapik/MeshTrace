@@ -1,0 +1,16 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtx30
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
+
+
+python train.py -s ~/input/custom/Detailed\ Drum\ Set -m output/custom/Detailed\ Drum\ Set --eval --iterations 30000 --indoor
+python train.py -s ~/input/custom/indoor\ plant\ ficus/ -m output/custom/indoor\ plant\ ficus/ --eval --iterations 30000 --indoor
+python train.py -s ~/input/custom/Hotdog -m output/custom/Hotdog --eval --iterations 30000 --indoor
+python train.py -s ~/input/custom/Microphone -m output/custom/Microphone --eval --iterations 30000 --indoor

@@ -108,10 +108,11 @@ def compute_instance_feature_via_feature_rasterizer(viewpoint_cam, triangles, pi
     instance_features = instance_image.permute(1, 2, 0).reshape(-1, instance_image.shape[0])
 
     sam_mask = torch.from_numpy(viewpoint_cam.sam_mask).to(torch.int).view(-1).cuda()
-    return instance_features, sam_mask, instance_image.permute(1, 2, 0)
+    return instance_features, sam_mask, instance_image.permute(1, 2, 0), render_pkg
 
 
-def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name):
+def training_feature(dataset, opt, pipe, save_iterations, save_name):
+    checkpoint=dataset.start_checkpoint
     first_iter = 0
     triangles = TriangleModel(dataset.sh_degree)
     scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma)
@@ -147,16 +148,19 @@ def training_feature(dataset, opt, pipe, save_iterations, checkpoint, save_name)
             viewpoint_stack = scene.getTrainCameras().copy()
         viewpoint_cam = viewpoint_stack.pop(randint(0, len(viewpoint_stack)-1))
 
-        instance_features, sam_mask, instance_features_for_plot=compute_instance_feature_via_feature_rasterizer(viewpoint_cam,triangles, pipe, background)
+        instance_features, sam_mask, instance_features_for_plot, render_pkg=compute_instance_feature_via_feature_rasterizer(viewpoint_cam,triangles, pipe, background)
 
         if iteration %1000==0:
             instance_image_rgb = _project_instance_image_for_plot(instance_features_for_plot.permute(2, 0, 1))
             plt.figure()
-            plt.subplot(1, 2, 1)
+            plt.subplot(1, 3, 1)
             plt.imshow(instance_image_rgb.permute(1, 2, 0).cpu().numpy())
             plt.axis("off")
-            plt.subplot(1, 2, 2)
+            plt.subplot(1, 3, 2)
             plt.imshow(sam_mask.reshape(instance_image_rgb.shape[1:]).cpu().numpy())
+            plt.axis("off")
+            plt.subplot(1, 3, 3)
+            plt.imshow(render_pkg["render"].permute(1, 2, 0).detach().cpu().numpy())
             plt.axis("off")
             plt.savefig(f"instance_map/instance_map_new_{iteration}_{viewpoint_cam.image_name}.png", bbox_inches="tight", pad_inches=0)
             plt.close()
@@ -232,7 +236,7 @@ if __name__ == "__main__":
 
     # Start GUI server, configure and run training
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training_feature(lp.extract(args), op.extract(args), pp.extract(args), args.save_iterations,  args.start_checkpoint,args.save_name)
+    training_feature(lp.extract(args), op.extract(args), pp.extract(args), args.save_iterations,args.save_name)
 
     # All done
     print("\nTraining complete.")
