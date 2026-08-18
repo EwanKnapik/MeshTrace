@@ -44,6 +44,12 @@ def resolve_point_cloud_state_path(path: str) -> str:
     if os.path.isfile(canonical_path):
         return canonical_path
 
+    # Some exported checkpoints use the shorter historical filename.  Keep it
+    # as a fallback so consumers can point at either checkpoint convention.
+    legacy_path = os.path.join(directory, "point_cloud.pt")
+    if os.path.isfile(legacy_path):
+        return legacy_path
+
     prefix = "point_cloud_state_dict_"
     suffix = ".pt"
     indexed_candidates = []
@@ -410,6 +416,7 @@ class TriangleModel:
                 self._triangle_indices[object_indices],
                 self.vertices,
                 self.vertex_weight,
+                self._sigma
             )
     
     def restore(self, model_params, training_args=None,mode=None):
@@ -421,7 +428,8 @@ class TriangleModel:
             self._instance_feature,
             self._triangle_indices,
             self.vertices,
-            self.vertex_weight)=model_params
+            self.vertex_weight,
+            self._sigma)=model_params
         elif mode==None:
             self.active_sh_degree = model_params["active_sh_degree"]
             self._features_dc = model_params["features_dc"]

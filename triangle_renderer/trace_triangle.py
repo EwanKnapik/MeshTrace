@@ -72,15 +72,16 @@ def trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_
         max_class_id=num_class
 
     num_mask_ids=max_class_id+1
-    weights = torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
+    #weights = torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
 
     if flat_rend_ids.numel() > 0:
         linear_idx = flat_rend_ids * num_mask_ids + flat_masks
         counts = torch.bincount(linear_idx, minlength=num_triangles * num_mask_ids).float()
         counts = counts.view(num_triangles, num_mask_ids)
         denom = counts.sum(dim=1, keepdim=True).clamp(min=1.0)
-        weights = counts / denom
-    return weights
+        return counts/denom
+    else:
+        return torch.zeros((num_triangles, num_mask_ids), device=id_masks.device, dtype=torch.float32)
 
 def compressed_trace(viewpoint_camera, pc: TriangleModel, id_masks: torch.Tensor, pipe ,bg_color:torch.Tensor,
           alpha_w=False, scaling_modifier=1.0, override_color=None):

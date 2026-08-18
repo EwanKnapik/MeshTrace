@@ -22,19 +22,19 @@ def sixel_fig():
     writer = sixel.SixelWriter()
     writer.draw(buffer)
 
-def perform_dbscan(input_tensor):
+def perform_dbscan(input_tensor,eps:float=15,min_samples:int=1000,metric:str="cosine"):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
-    clustering = DBSCAN(eps=15, min_samples=1000, metric="cosine").fit(input_tensor_df)
+    clustering = DBSCAN(eps=eps, min_samples=min_samples, metric=metric).fit(input_tensor_df)
     return clustering.labels_
     
-def perform_hdbscan(input_tensor):
+def perform_hdbscan(input_tensor,min_cluster_size:int,min_samples:int,metric:str):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
     clustering = HDBSCAN(min_cluster_size=1000,min_samples=5,metric="euclidean",alpha=1, cluster_selection_epsilon=1).fit(input_tensor_df)
     return clustering.labels_
 
-def perform_kmeans(input_tensor):
+def perform_kmeans(input_tensor,n_cluster:int):
     input_tensor_df = cudf.DataFrame(input_tensor.detach())
-    clustering = KMeans(n_clusters=50).fit(input_tensor_df)
+    clustering = KMeans(n_clusters=n_cluster).fit(input_tensor_df)
     return clustering.labels_
 
 
@@ -151,7 +151,6 @@ def segment_scene(
     triangles_indices=state_dict["_triangle_indices"]
     instance_feature_weighted=vertex_weight*instance_feature
     triangle_instance=instance_feature_weighted[triangles_indices].sum(dim=1)
-    print(triangle_instance.shape)
 
     if plot_kdistance or kdistance_only:
         if kdistance_output is None:
@@ -170,11 +169,9 @@ def segment_scene(
 
 
 
-    labels=perform_dbscan(triangle_instance)
+    labels=perform_dbscan(triangle_instance,0.02,1000)
     #labels=perform_hdbscan(triangle_instance)
-    #labels=perform_kmeans(triangle_instance)
-    
-    
+    #labels=perform_kmeans(triangle_instance,10)
     
     
     labels=torch.tensor(labels)

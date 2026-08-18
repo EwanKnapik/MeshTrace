@@ -14,7 +14,7 @@ import numpy as np
 from PIL import Image
 
 
-DEFAULT_INPUT = Path("~/input/custom/indoor plant ficus/semantic_instance")
+DEFAULT_INPUT = Path("~/input/custom/dataset_easy/semantic_instance")
 SUPPORTED_EXTENSIONS = {".png", ".tif", ".tiff"}
 
 

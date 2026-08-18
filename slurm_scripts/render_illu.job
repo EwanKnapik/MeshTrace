@@ -1,0 +1,27 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtx30
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
+
+
+
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/Hotdog -m output/custom/Hotdog --iteration sp_20000 --image 16
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/Hotdog -m output/custom/Hotdog --iteration sp_20000 --image 32
+
+
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/Detailed_Drum_Set -m output/custom/Detailed_Drum_Set --iteration sp_20000 --image 16
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/Detailed_Drum_Set -m output/custom/Detailed_Drum_Set --iteration sp_20000 --image 32
+
+
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/indoor_plant_ficus -m output/custom/indoor_plant_ficus --iteration sp_20000 --image 16
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/indoor_plant_ficus -m output/custom/indoor_plant_ficus --iteration sp_20000 --image 32
+
+
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/Microphone -m output/custom/Microphone --iteration sp_20000 --image 16
+srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-splatting/ --partition=rtx30 --gres=gpu:1 --nodes=1 python test_print.py -s ~/input/custom/Microphone -m output/custom/Microphone --iteration sp_20000 --image 32

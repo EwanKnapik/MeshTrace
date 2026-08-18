@@ -20,10 +20,10 @@ source=${path}/${scene}
 
 
 echo "[1/4] Scene reconstruction (train_rgb)..."
-#python train.py -s ${source} -m ${output} --eval --iterations 30000 || exit 1
+python train.py -s ${source} -m ${output} --eval --iterations 30000 || exit 1
 
 echo "[2/4] Merge patch masks..."
-#python merge_patches.py -s ${source}  -m ${output} || exit 1
+python merge_patches.py -s ${source}  -m ${output} || exit 1
  
 echo "[3/4] Delete Ambiguous Gaussians..."
 python remove_ab_triangles.py -s ${source} -m ${output} --sam_folder split_ms --iterations 1000 --prune || exit 1

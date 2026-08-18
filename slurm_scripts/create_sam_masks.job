@@ -18,7 +18,8 @@
 
 
 
-python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Detailed\ Drum\ Set
-python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/indoor\ plant\ ficus/
-python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Hotdog
-python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Microphone
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Detailed\ Drum\ Set
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/indoor\ plant\ ficus/
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Hotdog
+#python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/Microphone
+python get_sam_masks.py --sam_checkpoint ~/segment-anything/sam_ckpt/sam_vit_h_4b8939.pth --file_path ~/input/custom/dataset_easy

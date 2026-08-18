@@ -1,7 +1,7 @@
 #!/bin/bash
 #SBATCH --job-name=mesh_splatting
 #SBATCH --chdir=/home/KnapikE/mesh-splatting
-#SBATCH --partition=rtx40
+#SBATCH --partition=rtx30
 #SBATCH --gres=gpu:1
 #SBATCH --nodes=1
 #SBATCH --output=output/pipeline.%j.out
@@ -12,7 +12,7 @@ export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PAT
 # We use '|| exit 1' to stop the job immediately if a step fails.
 dataset=custom
 path=~/input/${dataset}
-scene='Microphone' 
+scene='dataset_easy' 
 
 output=./output/${dataset}/${scene} 
 source=${path}/${scene}
@@ -25,10 +25,10 @@ echo "[2/4] Merge patch masks..."
 python merge_patches.py -s ${source}  -m ${output} || exit 1
  
 echo "[3/4] Delete Ambiguous Gaussians..."
-python remove_ab_triangles.py -s ${source} -m ${output} --sam_folder split_ms --iterations 9000 --prune --eval|| exit 1
+python remove_ab_triangles.py -s ${source} -m ${output} --sam_folder split_ms --iterations 1000 --prune --eval|| exit 1
 
 echo "[4/4] Contrastive lifting..."
-python train_contrastive.py -s ${source} -m ${output} --iterations 20000 --start_checkpoint ${output}/point_cloud/iteration_chkpt_9000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ || exit 1
+python train_contrastive.py -s ${source} -m ${output} --iterations 20000 --start_checkpoint ${output}/point_cloud/iteration_chkpt_1000/point_cloud_state_dict.pt --sam_folder split_ms --include_feature --save_name sp_ || exit 1
 
 echo "=========================================="
 echo "Pipeline Completed Successfully!"

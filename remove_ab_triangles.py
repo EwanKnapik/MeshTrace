@@ -255,6 +255,46 @@ def training(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoi
                            scene, render, (pipe, background), result_file)
 
 
+
+def only_prune_triangles(dataset, opt, pipe, testing_iterations, saving_iterations, checkpoint_iterations, alpha_w,start_checkpoint):
+    tb_writer = prepare_output_and_logger(dataset)
+    triangles = TriangleModel(dataset.sh_degree)
+    if start_checkpoint:
+        scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma, load_iteration=start_checkpoint)
+    else:
+        scene = Scene(dataset, triangles, opt.set_weight, opt.set_sigma, load_iteration=-1)
+    triangles.training_setup(opt)
+
+    bg_color = [1, 1, 1] if dataset.white_background else [0, 0, 0]
+    background = torch.tensor(bg_color, dtype=torch.float32, device="cuda")
+
+    result_file = os.path.join(dataset.model_path, 'split_result.txt')
+    with open(result_file, 'a') as f:
+        f.write(f'Prune {getattr(opt, "prune", False)} \n')
+    viewpoints = scene.getTrainCameras().copy()
+
+    if getattr(opt, 'prune', False):
+        if iteration == 1 or iteration == opt.iterations:
+            with torch.no_grad():
+                p_mask = prune_mask_from_was_rendered(triangles, viewpoints, pipe, background, unseen=-1).cuda()
+                # prune_triangles uses a KEEP mask (opposite of GaussianModel)
+                triangles.prune_triangles(p_mask)
+                print('delete {} triangles, total {} triangles now'.format(
+                    (~p_mask).sum(), triangles._triangle_indices.shape[0]))
+                with open(result_file, 'a') as f:
+                    f.write('deleted {} triangles, total {} triangles now\n'.format(
+                        (~p_mask).sum(), triangles._triangle_indices.shape[0]))
+
+
+
+    scene.save(f"chkpt_{iteration}")          
+    print("\n[ITER {}] Saving Checkpoint".format(iteration))
+
+    training_report(tb_writer, iteration, Ll1, loss, l1_loss,
+                    iter_start.elapsed_time(iter_end), testing_iterations,
+                    scene, render, (pipe, background), result_file)
+
+
 def prepare_output_and_logger(args):
     if not args.model_path:
         if os.getenv('OAR_JOB_ID'):
@@ -378,8 +418,13 @@ if __name__ == "__main__":
     safe_state(args.quiet)
 
     torch.autograd.set_detect_anomaly(args.detect_anomaly)
-    training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations,
-             args.test_iterations, args.checkpoint_iterations, args.alpha_w, args.start_checkpoint)
+    #training(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations,
+    #         args.test_iterations, args.checkpoint_iterations, args.alpha_w, args.start_checkpoint)
 
+    #placeholder function while the full adaptive density control doesn't provide good results.
+    # only one iteration that deletes unseen triangles
+    # keeping the same function call and output checlpoint name for compatibility purposes 
+    only_prune_triangles(lp.extract(args), op.extract(args), pp.extract(args), args.test_iterations,
+             args.test_iterations, args.checkpoint_iterations, args.alpha_w, args.start_checkpoint)
     # All done
     print("\nTraining complete.")

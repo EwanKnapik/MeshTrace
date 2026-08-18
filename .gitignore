@@ -4,6 +4,7 @@ input/
 error/
 *.mp4
 instance_map/
+train_debug/
 submodules
 *.pt
 

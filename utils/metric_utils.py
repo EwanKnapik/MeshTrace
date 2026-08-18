@@ -79,10 +79,11 @@ def get_obj_by_mask(triangle, mask, inverse=False):
     tri = triangle.capture('Objects', mask)
     obj = TriangleModel(triangle.max_sh_degree)
     obj.restore(tri, mode='obj')
+    obj.update_min_weight(1)
     return obj
 
 ex_ref = {
-    "office_0_1": {8: 185, 10: 138, 26: 815, 28: 635, 36: 634, 40: 177, 58: 646, 61: 203},
+    "office_0": {8: 185, 10: 138, 26: 815, 28: 635, 36: 634, 40: 177, 58: 646, 61: 203},
     "office_1": {7: 234, 33: 215, 17: 30, 39: 208, 45: 623, 46: 656},
     "office_2": {9: 592, 41: 585, },
     "office_3": {3: 307, 11: 321, 38: 2, 101: 156, },

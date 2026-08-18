@@ -17,7 +17,7 @@ def parse_vec3(s):
 def load_scene(scene_dir, device="cpu"):
     path = os.path.join(scene_dir, "point_cloud/iteration_30000", "point_cloud_state_dict.pt")
     if not os.path.isfile(path): raise FileNotFoundError(f"Could not find '{path}'")
-    sd = torch.load(path, map_location=device)
+    sd = torch.load(path, map_location=device, weights_only=False)
     verts   = sd["triangles_points"].to(device).to(torch.float32)        # [V,3]
     faces   = sd["_triangle_indices"].to(device).to(torch.int64)         # [T,3]
     f_dc    = sd["features_dc"].to(device).to(torch.float32)             # [V,1,3]

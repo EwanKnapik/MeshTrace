@@ -26,3 +26,23 @@
  Detailed_Drum_Set: mIoU 23.25  mAcc 25.09  mPNSR 17.47 Scene_IOU nan ./output/custom/Detailed_Drum_Set/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
  indoor_plant_ficus: mIoU 23.47  mAcc 28.00  mPNSR 22.23 Scene_IOU 0.5699381828308105 ./output/custom/indoor_plant_ficus/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
  office_2: mIoU 61.35  mAcc 65.22  mPNSR 9.13 Scene_IOU 0.8310335278511047 ./output/REPLICA/office_2/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_4: mIoU 38.00  mAcc 41.27  mPNSR 11.01 Scene_IOU 0.3745814859867096 ./output/REPLICA/office_4/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ room_0: mIoU 24.77  mAcc 27.27  mPNSR 9.33 Scene_IOU 0.2981868088245392 ./output/REPLICA/room_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ dataset_easy: mIoU 10.65  mAcc 39.14  mPNSR 9.31 Scene_IOU 0.10229816287755966 ./output/custom/dataset_easy/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ dataset_easy: mIoU 34.99  mAcc 49.03  mPNSR 9.68 Scene_IOU 0.26693326234817505 ./output/custom/dataset_easy/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_3: mIoU 36.92  mAcc 40.49  mPNSR 9.60 Scene_IOU 0.45269420742988586 ./output/REPLICA/office_3/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ room_1: mIoU 44.80  mAcc 47.38  mPNSR 10.63 Scene_IOU 0.5526207685470581 ./output/REPLICA/room_1/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ room_2: mIoU 42.37  mAcc 44.94  mPNSR 12.33 Scene_IOU 0.5955286622047424 ./output/REPLICA/room_2/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 67.89  mAcc 71.77  mPNSR 15.71 Scene_IOU 0.8574935793876648 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 67.52  mAcc 71.39  mPNSR 15.33 Scene_IOU 0.8567212820053101 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 67.52  mAcc 71.39  mPNSR 15.33 Scene_IOU 0.8567212820053101 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 67.52  mAcc 71.39  mPNSR 15.33 Scene_IOU 0.8567212820053101 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 67.89  mAcc 71.77  mPNSR 15.71 Scene_IOU 0.8574935793876648 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ Hotdog: mIoU 42.50  mAcc 43.10  mPNSR 15.84 Scene_IOU 0.8536409139633179 ./output/custom/Hotdog/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ Microphone: mIoU 29.85  mAcc 34.59  mPNSR 25.65 Scene_IOU nan ./output/custom/Microphone/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ indoor_plant_ficus: mIoU 24.45  mAcc 26.37  mPNSR 18.30 Scene_IOU 0.5699381828308105 ./output/custom/indoor_plant_ficus/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ Detailed_Drum_Set: mIoU 22.23  mAcc 23.14  mPNSR 16.13 Scene_IOU nan ./output/custom/Detailed_Drum_Set/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_0: mIoU 63.97  mAcc 64.73  mPNSR 21.36 Scene_IOU 0.8574935793876648 ./output/REPLICA/office_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ room_0: mIoU 22.17  mAcc 23.43  mPNSR 8.99 Scene_IOU 0.2981868088245392 ./output/REPLICA/room_0/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ office_3: mIoU 32.48  mAcc 33.66  mPNSR 10.74 Scene_IOU 0.45269420742988586 ./output/REPLICA/office_3/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt
+ room_2: mIoU 36.83  mAcc 37.51  mPNSR 12.96 Scene_IOU 0.5955286622047424 ./output/REPLICA/room_2/Sequence_1/point_cloud/iteration_sp_20000/point_cloud_state_dict.pt

@@ -212,7 +212,5 @@ def update_indoor(params):
     params.lambda_normals_super = 0.01
     params.prune_size = 1300
     params.lambda_vertex = 0.00025
-    params.depth_lambda_init = 0.0
-    params.depth_lambda_final = 0.0
     params.iteration_mesh = 12000
     return params

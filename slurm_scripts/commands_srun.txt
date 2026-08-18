@@ -21,3 +21,7 @@ srun --job-name=mesh_splatting --cpus-per-task=10 --chdir=/home/KnapikE/mesh-spl
 
 python create_ply.py output/nerf_synthetic/hotdog/point_cloud/iteration_chkpt_9000/
 srun --job-name=mesh_splatting --chdir=/home/KnapikE/mesh-splatting --partition=rtx40 --gres=gpu:1 --cpus-per-task=10 --nodes=1 python3 ply_scripts/create_full_ply_clustered.py --scene_path output/custom/POLY/POLY_01/point_cloud/iteration_sp_20000/
+
+
+
+srun   --job-name=mesh_splatting   --chdir=/home/KnapikE/mesh-splatting   --partition=rtx30 --gres=gpu:1  --cpus-per-task=10 --nodes=1 python render.py --iteration sp_20000 -s ~/input/REPLICA/office_1/Sequence_1/ -m output/REPLICA/office_1/Sequence_1/ --eval --skip_train

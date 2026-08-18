@@ -17,6 +17,7 @@ import json
 import shutil
 import numpy as np
 from tqdm import tqdm
+import matplotlib.pyplot as plt
 
 def feature_map(viewpoint_cam, triangles, pipe, background):
     with torch.no_grad():
@@ -55,7 +56,7 @@ def test_object(triangles, tris_mask, id, test_viewpoints, background, pipe, obj
         gt_mask = (gt_id_masks == id)
         if gt_mask.sum() < 200:
             continue
-        render_pkg = render(viewpoint, object, pipe, background, False)
+        render_pkg = render(viewpoint, object, pipe, background, True)
         img = render_pkg["render"].clone()
         img = img.clip(0, 1)
         render_mask = img.sum(0) > 0
@@ -138,7 +139,7 @@ if __name__ == "__main__":
         "office_2": [2, 3, 4, 6, 8, 9, 12, 13, 14, 17, 23, 27, 34, 38, 39, 46, 49, 51, 54, 57, 58, 59, 63, 65, 68, 69, 70, 72, 73, 74, 75, 77, 78, 80, 84, 85, 86, 90, 92, 93],
         "office_3": [1, 2, 8, 11, 12, 15, 18, 21, 22, 25, 29, 32, 33, 42, 51, 54, 55, 56, 60, 61, 70, 82, 85, 86, 88, 86, 97, 101, 102, 103, 110, 111,],
         "office_4": [3, 4, 5, 6, 9, 13, 16, 18, 20, 23, 31, 34, 47, 48, 49, 51, 52, 56, 60, 61, 62, 65, 69, 70, 71,],
-        "room_0": [1, 2, 3, 4, 6, 7, 8, 11, 13, 15, 18, 19, 20, 21, 22, 24, 30, 32, 34, 35, 36, 39, 40, 41, 43, 45, 47, 49, 50, 51, 54, 55, 58, 61, 63, 64, 68, 69, 70, 71, 72, 73, 74, 75, 78, 79, 83, 85, 86, 87, 90, 92,],
+        "room_0": [1, 2, 3, 4, 6, 7, 11, 13, 15, 18, 19, 20, 21, 22, 24, 30, 32, 34, 35, 36, 39, 40, 41, 43, 45, 47, 49, 50, 51, 54, 55, 58, 61, 63, 64, 68, 70, 71, 72, 73, 74, 75, 78, 85, 86, 87, 90, 92,],
         "room_1": [3, 4, 6, 7, 8, 9, 11, 12, 13, 15, 17, 18, 19, 21, 22, 23, 24, 27, 30, 32, 33, 35, 37, 39, 40, 43, 45, 46, 48, 50, 51, 52, 53, 54,],
         "room_2": [2, 4, 5, 10, 14, 15, 17, 18, 19, 20, 22, 24, 26, 27, 28, 29, 31, 32, 34, 36, 38, 39, 40, 42, 44, 46, 47, 48, 49, 52, 54, 55, 56, 57, 58, 59, 61],
         "Hotdog": [
@@ -152,6 +153,9 @@ if __name__ == "__main__":
         ],
         "Microphone": [
             0, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 25, 26, 28, 32, 34, 35
+        ],
+        "dataset_easy": [
+            1, 2, 3, 4, 5, 6
         ],
     }[scene_name], dtype=torch.uint8)
 
@@ -295,6 +299,7 @@ if __name__ == "__main__":
             weights = []
             for idx, viewpoint in enumerate(viewpoints):
                 w = trace(viewpoint, triangles, masks[idx], pipe, background, alpha_w,num_class=1)  # [P,2]
+                print(w.shape)
                 weights.append(w)
             weights = torch.stack(weights)
             weights = weights.sum(0)  # [view,P,2]->[P,2]

@@ -1,0 +1,26 @@
+#!/bin/bash
+#SBATCH --job-name=mesh_splatting
+#SBATCH --chdir=/home/KnapikE/mesh-splatting
+#SBATCH --partition=rtx30
+#SBATCH --gres=gpu:1
+#SBATCH --cpus-per-task=10
+#SBATCH --nodes=1
+#SBATCH --output=output/pipeline.%j.out
+#SBATCH --error=error/pipeline.%j.err
+export LD_LIBRARY_PATH=/home/KnapikE/micromamba/envs/trace3d/lib:$LD_LIBRARY_PATH
+
+# --- 2. EXECUTION PIPELINE ---
+# We use '|| exit 1' to stop the job immediately if a step fails.
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/office_0/Sequence_1/ -m output/REPLICA/office_2/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/office_1/Sequence_1/ -m output/REPLICA/office_2/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/office_2/Sequence_1/ -m output/REPLICA/office_2/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/office_3/Sequence_1/ -m output/REPLICA/office_3/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/office_4/Sequence_1/ -m output/REPLICA/office_4/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/room_0/Sequence_1/ -m output/REPLICA/room_0/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/room_1/Sequence_1/ -m output/REPLICA/room_1/Sequence_1/ --eval --skip_train
+#python render.py --iteration sp_20000 -s ~/input/REPLICA/room_2/Sequence_1/ -m output/REPLICA/room_2/Sequence_1/ --eval --skip_train
+
+python render.py --iteration sp_20000 -s ~/input/custom/Detailed_Drum_Set -m output/custom/Detailed_Drum_Set --eval --skip_train
+python render.py --iteration sp_20000 -s ~/input/custom/indoor_plant_ficus/ -m output/custom/indoor_plant_ficus/ --eval --skip_train
+python render.py --iteration sp_20000 -s ~/input/custom/Hotdog -m output/custom/Hotdog --eval --skip_train
+python render.py --iteration sp_20000 -s ~/input/custom/Microphone -m output/custom/Microphone --eval --skip_train

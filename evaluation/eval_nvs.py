@@ -36,6 +36,9 @@ test_ids = {
     "Microphone": [
             0, 2, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 25, 26, 28, 32, 34, 35
     ],
+    "dataset_easy": [
+        0, 1, 2, 3, 4, 5, 6
+    ],
 }
 
 def feature_map(viewpoint_cam, triangles, pipe, background):
