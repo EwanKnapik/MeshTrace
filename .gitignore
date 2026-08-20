@@ -4,9 +4,11 @@ input/
 error/
 *.mp4
 instance_map/
-train_debug/
-submodules
 *.pt
+build/
+diff_triangle_feature_rasterization.egg-info/
+glm/
+__pycache__/
 
 # Byte-compiled / optimized / DLL files
 */__pycache__/
