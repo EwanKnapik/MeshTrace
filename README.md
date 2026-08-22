@@ -11,7 +11,7 @@ The code has been used and tested with Python 3.11 and CUDA 12.6.
 You should clone the repository with the different submodules by running the following command:
 
 ```bash
-git clone https://github.com/EwanKnapik/mesh_splatting_with_semantic.git --recursive
+git clone https://github.com/EwanKnapik/MeshTrace.git --recursive
 cd MeshTrace
 ```
 
