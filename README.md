@@ -12,14 +12,14 @@ You should clone the repository with the different submodules by running the fol
 
 ```bash
 git clone https://github.com/EwanKnapik/mesh_splatting_with_semantic.git --recursive
-cd mesh_splatting_with_semantic
+cd MeshTrace
 ```
 
 Then, we suggest to use a virtual environment to install the dependencies.
 
 ```bash
-micromamba create -n mesh_splatting python=3.11
-micromamba activate mesh_splatting
+micromamba create -n meshTrace python=3.11
+micromamba activate meshTrace
 micromamba install nvidia/label/cuda-12.6.0::cuda
 
 pip install torch==2.7.1 torchvision==0.22.1
